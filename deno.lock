@@ -4,6 +4,7 @@
     "npm:@kubohiroya/qrcode-structured-append@0.3.0": "0.3.0",
     "npm:@nuintun/qrcode@5.0.3": "5.0.3",
     "npm:fast-check@4.5.3": "4.5.3",
+    "npm:iconv-lite@0.6.3": "0.6.3",
     "npm:pngjs@7.0.0": "7.0.0",
     "npm:solid-js@1.9.9": "1.9.9",
     "npm:zxing-wasm@3.1.6": "3.1.6_@types+emscripten@1.41.6"
@@ -30,11 +31,20 @@
         "pure-rand"
       ]
     },
+    "iconv-lite@0.6.3": {
+      "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
+      "dependencies": [
+        "safer-buffer"
+      ]
+    },
     "pngjs@7.0.0": {
       "integrity": "sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow=="
     },
     "pure-rand@7.0.1": {
       "integrity": "sha512-oTUZM/NAZS8p7ANR3SHh30kXB+zK2r2BPcEn/awJIbOvq82WoMN4p62AWWp3Hhw50G0xMsw1mhIBLqHw64EcNQ=="
+    },
+    "safer-buffer@2.1.2": {
+      "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg=="
     },
     "seroval-plugins@1.3.3_seroval@1.3.2": {
       "integrity": "sha512-16OL3NnUBw8JG1jBLUoZJsLnQq0n5Ua6aHalhJK4fMQkz1lqR7Osz1sA30trBtd9VUDc2NgkuRCn8+/pBwqZ+w==",
@@ -78,6 +88,7 @@
       "npm:@kubohiroya/qrcode-structured-append@0.3.0",
       "npm:@nuintun/qrcode@5.0.3",
       "npm:fast-check@4.5.3",
+      "npm:iconv-lite@0.6.3",
       "npm:pngjs@7.0.0",
       "npm:solid-js@1.9.9",
       "npm:zxing-wasm@3.1.6"

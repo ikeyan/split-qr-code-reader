@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import {strict as assert} from 'node:assert';
 import {createStructuredAppend, type StructuredAppendSymbol} from '@kubohiroya/qrcode-structured-append';
+import iconv from 'iconv-lite';
 import {PNG} from 'pngjs';
 import {prepareZXingModule,readBarcodes} from 'zxing-wasm/reader';
 import {accept,assemble,type Assembly} from '../src/assemble.ts';
@@ -30,4 +31,20 @@ Deno.test('generated structured QR images retain their metadata and reconstruct 
     }
     const result=assemble(state);assert.equal(result.status,'complete');assert.deepEqual([...result.bytes!],[...bytes]);
   }),{numRuns:25});
+});
+
+Deno.test('generated Shift_JIS structured QR images reconstruct Japanese text',async()=>{
+  await fc.assert(fc.asyncProperty(fc.array(fc.integer({min:0x3041,max:0x3093}),{minLength:15,maxLength:60}),async points=>{
+    const text=String.fromCodePoint(...points);
+    const bytes=iconv.encode(text,'shift_jis');
+    const parts=createStructuredAppend(bytes,{maxVersion:1});
+    let state: Assembly=null;
+    for(const part of [...parts].reverse()){
+      const [code]=await readBarcodes(makeQr(part),{formats:['QRCode']});
+      state=accept(state,{index:code.sequenceIndex,total:code.sequenceSize,parity:Number(code.sequenceId),bytes:code.bytes}).state;
+    }
+    const complete=assemble(state);assert.equal(complete.status,'complete');
+    assert.throws(()=>new TextDecoder('utf-8',{fatal:true}).decode(complete.bytes!));
+    assert.equal(new TextDecoder('shift_jis',{fatal:true}).decode(complete.bytes!),text);
+  }),{numRuns:20});
 });

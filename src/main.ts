@@ -50,8 +50,12 @@ function App() {
     if (assembled.status === 'checksum-error') { setResult(''); setMessage('チェックサムが一致しません。リセットして読み直してください。'); }
     if (assembled.status === 'complete') {
       stop();
-      try { setResult(new TextDecoder('utf-8', {fatal:true}).decode(assembled.bytes)); setMessage('すべての QR を読み取りました。'); }
-      catch { setResult(''); setMessage('データを UTF-8 テキストとして表示できません。'); }
+      try {
+        let text: string;
+        try { text = new TextDecoder('utf-8', {fatal:true}).decode(assembled.bytes); }
+        catch { text = new TextDecoder('shift_jis', {fatal:true}).decode(assembled.bytes); }
+        setResult(text); setMessage('すべての QR を読み取りました。');
+      } catch { setResult(''); setMessage('読み取りデータをテキストとして表示できません。'); }
     }
   }
   function codeLabel(code: ReadResult): string {

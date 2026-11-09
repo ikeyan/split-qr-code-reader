@@ -18,3 +18,5 @@ deno run --allow-net --allow-read jsr:@std/http/file-server dist
 `src/index.html` をエントリーポイントに `deno bundle` で `dist/` に出力します。カメラは HTTPS または localhost で利用できます。GitHub Actions は main への push 後にビルドとテストを行い、GitHub Pages に公開します。
 
 QR デコードに [zxing-wasm](https://github.com/Sec-ant/zxing-wasm) を使用しています。同梱ライセンスは `vendor/zxing-wasm-LICENSE.txt` です。
+
+HEIC/HEIF の変換には [heic-to 1.6.7](https://github.com/hoppergee/heic-to/tree/v1.6.7)（LGPL-3.0 以降）を使用しています。配布する変換器は置き換え可能な `heic-to.js` として同梱し、ライセンスを `vendor/heic-to-LICENSE.txt` に収めています。対応するソースは [npm パッケージ](https://registry.npmjs.org/heic-to/-/heic-to-1.6.7.tgz) に含まれます。

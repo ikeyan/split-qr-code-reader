@@ -1,9 +1,10 @@
-import {createSignal, onCleanup} from 'solid-js';
+import {batch, createSignal, onCleanup} from 'solid-js';
 import {render} from 'solid-js/web';
 import h from 'solid-js/h';
 import type {ReadResult} from 'zxing-wasm/reader';
 import {decode} from './decoder.ts';
-import {accept, assemble, type Assembly} from './assemble.ts';
+import {assemble, type Assembly} from './assemble.ts';
+import {takePart} from './session.ts';
 import {type Point} from './geometry.ts';
 import {Pointers} from './pointers.ts';
 
@@ -25,12 +26,16 @@ function App() {
 
   function stop() {
     generation++;
-    stream?.getTracks().forEach(track => track.stop());
+    const currentStream = stream;
     stream = undefined;
-    video.srcObject = null;
+    // Stop hardware before triggering any reactive rendering.
+    currentStream?.getTracks().forEach(track => track.stop());
     pointers.clear();
-    setDetected([]);
-    setActive(false);
+    batch(() => {
+      setActive(false);
+      setDetected([]);
+    });
+    video.srcObject = null;
   }
   onCleanup(stop);
   function add(code: ReadResult) {
@@ -40,31 +45,33 @@ function App() {
       setMessage('QR コードを読み取りました。'); return;
     }
     if (plain().length) { setMessage('通常の QR が読み取り済みです。リセットしてから分割 QR を読み取ってください。'); return; }
-    const decision = accept(state(), {index:code.sequenceIndex, total:code.sequenceSize, parity:Number(code.sequenceId), bytes:code.bytes});
-    if (decision.outcome === 'conflict') { setMessage('別の分割 QR または同じ番号の異なるデータです。リセットしてから読み直してください。'); return; }
-    if (decision.outcome === 'invalid') { setMessage('分割 QR の情報を読み取れませんでした。'); return; }
-    if (decision.outcome === 'duplicate') return;
-    setState(decision.state);
-    setMessage(`${code.sequenceIndex + 1} 番を読み取りました。`);
-    const assembled = assemble(decision.state);
-    if (assembled.status === 'checksum-error') { setResult(''); setMessage('チェックサムが一致しません。リセットして読み直してください。'); }
-    if (assembled.status === 'complete') {
-      stop();
+    const update = takePart(state(), {index:code.sequenceIndex, total:code.sequenceSize, parity:Number(code.sequenceId), bytes:code.bytes}, stop);
+    if (update.outcome === 'conflict') { setMessage('別の分割 QR または同じ番号の異なるデータです。リセットしてから読み直してください。'); return; }
+    if (update.outcome === 'invalid') { setMessage('分割 QR の情報を読み取れませんでした。'); return; }
+    if (update.outcome === 'duplicate') return;
+    let text: string | undefined;
+    let completionMessage = 'すべての QR を読み取りました。';
+    if (update.status === 'complete') {
       try {
-        let text: string;
-        try { text = new TextDecoder('utf-8', {fatal:true}).decode(assembled.bytes); }
-        catch { text = new TextDecoder('shift_jis', {fatal:true}).decode(assembled.bytes); }
-        setResult(text); setMessage('すべての QR を読み取りました。');
-      } catch { setResult(''); setMessage('読み取りデータをテキストとして表示できません。'); }
+        try { text = new TextDecoder('utf-8', {fatal:true}).decode(update.bytes); }
+        catch { text = new TextDecoder('shift_jis', {fatal:true}).decode(update.bytes); }
+      } catch { text = ''; completionMessage = '読み取りデータをテキストとして表示できません。'; }
     }
+    batch(() => {
+      setState(update.state);
+      if (update.status === 'complete') { setResult(text!); setMessage(completionMessage); }
+      else if (update.status === 'checksum-error') { setResult(''); setMessage('チェックサムが一致しません。リセットして読み直してください。'); }
+      else setMessage(`${code.sequenceIndex + 1} 番を読み取りました。`);
+    });
   }
-  function codeLabel(code: ReadResult): string {
-    if (code.sequenceSize < 0) return plain().includes(code.text) ? 'QR 読み取り済み' : 'QR タッチして採択';
+  function codeStatus(code: ReadResult): 'new' | 'done' | 'conflict' {
+    if (code.sequenceSize < 0) return plain().includes(code.text) ? 'done' : state() ? 'conflict' : 'new';
+    if (plain().length) return 'conflict';
     const current = state();
-    if (!current) return `${code.sequenceIndex + 1} / ${code.sequenceSize} タッチして採択`;
+    if (!current) return 'new';
     const saved = current.parts.get(code.sequenceIndex);
-    if (current.total !== code.sequenceSize || current.parity !== Number(code.sequenceId) || (saved && (saved.length !== code.bytes.length || !saved.every((b, i) => b === code.bytes[i])))) return `${code.sequenceIndex + 1} / ${code.sequenceSize} 不一致`;
-    return `${code.sequenceIndex + 1} / ${code.sequenceSize} ${saved ? '読み取り済み' : 'タッチして採択'}`;
+    if (current.total !== code.sequenceSize || current.parity !== Number(code.sequenceId) || (saved && (saved.length !== code.bytes.length || !saved.every((b, i) => b === code.bytes[i])))) return 'conflict';
+    return saved ? 'done' : 'new';
   }
   function geometry(code: ReadResult): Point[] {
     const {width,height} = viewSize();
@@ -86,6 +93,7 @@ function App() {
   }
   async function start() {
     if (active()) return;
+    if (assemble(state()).status === 'complete') { setMessage('読み取り済みです。新しく始めるにはリセットしてください。'); return; }
     const current = ++generation;
     try {
       const newStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
@@ -133,12 +141,12 @@ function App() {
       h('button',{type:'button',class:'secondary',onClick:()=>active()?stop():start()},()=>active()?'カメラを停止':'カメラで読む')),
       h('div',{class:()=>`camera ${active()?'':'hidden'}`,ref:(el:HTMLDivElement)=>{camera=el;},onPointerDown:(e:PointerEvent)=>{e.preventDefault();camera.setPointerCapture(e.pointerId);pointer(e);},onPointerMove:(e:PointerEvent)=>{if(pointers.has(e.pointerId)) pointer(e);},onPointerUp:(e:PointerEvent)=>pointers.remove(e.pointerId),onPointerCancel:(e:PointerEvent)=>pointers.remove(e.pointerId),onLostPointerCapture:(e:PointerEvent)=>pointers.remove(e.pointerId)},
         h('video',{ref:(el:HTMLVideoElement)=>{video=el;},autoplay:true,muted:true,playsinline:true}),
-        h('svg',{viewBox:()=>`0 0 ${viewSize().width} ${viewSize().height}`,preserveAspectRatio:'none'},()=>detected().map(code=>{const points=geometry(code);return h('g',h('polygon',{points:points.map(p=>`${p.x},${p.y}`).join(' ')}),h('text',{x:points[0].x,y:Math.max(20,points[0].y-5)},codeLabel(code)))();}))),
-      h('p',{class:'muted'},()=>active()?'枠に指を置いたまま、紙を動かして連続読み取りできます。':'写真は複数枚選べます。1 枚の中の複数 QR にも対応しています。'),
+        h('svg',{viewBox:()=>`0 0 ${viewSize().width} ${viewSize().height}`,preserveAspectRatio:'none','aria-hidden':'true'},()=>detected().map(code=>{const points=geometry(code), status=codeStatus(code), x=points[0].x, y=Math.max(16,points[0].y-14); return h('g',{class:`qr-marker ${status}`},h('polygon',{points:points.map(p=>`${p.x},${p.y}`).join(' ')}),h('rect',{x,y:y-14,width:code.sequenceSize>0?48:30,height:26,rx:13}),h('text',{x:x+7,y:y+5},`${code.sequenceSize>0 ? code.sequenceIndex+1+' ' : ''}${status==='done'?'✓':status==='conflict'?'!':'+'}`))();}))),
+      h('p',{class:'muted'},()=>active()?'枠をタッチして読み取り　＋ 未読　✓ 読取済　！ 不一致':'写真は複数枚選べます。1 枚の中の複数 QR にも対応しています。'),
       h('p',{class:'status',role:'status'},message)),
     h('section',{class:'panel'},h('div',{class:'buttons'},h('h2','02　読み込み状況'),h('button',{class:'secondary',onClick:reset},'リセット')),
       h('div',{class:'parts'},()=>state()?Array.from({length:state()!.total},(_,i)=>h('span',{class:state()!.parts.has(i)?'part done':'part','aria-label':`${i+1}番 ${state()!.parts.has(i)?'読み込み済み':'未読み込み'}`},String(i+1))()):h('span',{class:'muted'},'分割 QR を読み込むと番号が表示されます。')),
-      h('p',{class:'muted'},()=>state()?`${state()!.parts.size} / ${state()!.total} 読み込み済み`:'')),
+      h('p',{class:()=>assemble(state()).status==='complete'?'completion':'muted','aria-live':'polite'},()=>state()?(assemble(state()).status==='complete'?`✓ すべて揃いました　${state()!.parts.size} / ${state()!.total}`:`${state()!.parts.size} / ${state()!.total} 読み込み済み`):'')),
     h('section',{class:'panel'},h('h2','03　読み取り結果'),h('textarea',{ref:(el:HTMLTextAreaElement)=>{output=el;},'aria-label':'読み取り結果',placeholder:'読み取った内容がここに表示されます',value:result,onInput:(e:InputEvent)=>setResult((e.currentTarget as HTMLTextAreaElement).value)}),
       h('div',{class:'buttons'},h('button',{onClick:copy,disabled:()=>!result()},'コピー'),h('button',{class:'secondary',onClick:share,disabled:()=>!result()},'共有'))),
     h('footer','読み取りデータはこの端末内で処理されます。'));

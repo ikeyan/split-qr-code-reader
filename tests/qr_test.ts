@@ -4,7 +4,7 @@ import {createStructuredAppend, type StructuredAppendSymbol} from '@kubohiroya/q
 import iconv from 'iconv-lite';
 import {PNG} from 'pngjs';
 import {prepareZXingModule,readBarcodes} from 'zxing-wasm/reader';
-import {accept,assemble,type Assembly} from '../src/assemble.ts';
+import {addPart,emptyCollection} from '../src/collection.ts';
 
 const wasmBinary=await Deno.readFile('vendor/zxing_reader.wasm');
 await prepareZXingModule({overrides:{wasmBinary},fireImmediately:true});
@@ -21,15 +21,15 @@ Deno.test('generated structured QR images retain their metadata and reconstruct 
   await fc.assert(fc.asyncProperty(fc.uint8Array({minLength:30,maxLength:100}),async bytes=>{
     const parts=createStructuredAppend(bytes,{maxVersion:1});
     assert.ok(parts.length >= 2);
-    let state: Assembly=null;
+    let state=emptyCollection();
     for (let index=parts.length-1;index>=0;index--) {
       const codes=await readBarcodes(makeQr(parts[index]),{formats:['QRCode']});
       assert.equal(codes.length,1); const code=codes[0];
       assert.equal(code.sequenceIndex,index);assert.equal(code.sequenceSize,parts.length);assert.equal(Number(code.sequenceId),parts[index].parity);
       assert.deepEqual([...code.bytes],[...parts[index].bytes]);
-      state=accept(state,{index:code.sequenceIndex,total:code.sequenceSize,parity:Number(code.sequenceId),bytes:code.bytes}).state;
+      state=addPart(state,{index:code.sequenceIndex,total:code.sequenceSize,parity:Number(code.sequenceId),bytes:code.bytes}).collection;
     }
-    const result=assemble(state);assert.equal(result.status,'complete');assert.deepEqual([...result.bytes!],[...bytes]);
+    assert.equal(state.suites.length,1); assert.deepEqual(state.suites[0].parts.flatMap(part=>[...part.bytes]),[...bytes]);
   }),{numRuns:25});
 });
 
@@ -38,13 +38,27 @@ Deno.test('generated Shift_JIS structured QR images reconstruct Japanese text',a
     const text=String.fromCodePoint(...points);
     const bytes=iconv.encode(text,'shift_jis');
     const parts=createStructuredAppend(bytes,{maxVersion:1});
-    let state: Assembly=null;
+    let state=emptyCollection();
     for(const part of [...parts].reverse()){
       const [code]=await readBarcodes(makeQr(part),{formats:['QRCode']});
-      state=accept(state,{index:code.sequenceIndex,total:code.sequenceSize,parity:Number(code.sequenceId),bytes:code.bytes}).state;
+      state=addPart(state,{index:code.sequenceIndex,total:code.sequenceSize,parity:Number(code.sequenceId),bytes:code.bytes}).collection;
     }
-    const complete=assemble(state);assert.equal(complete.status,'complete');
-    assert.throws(()=>new TextDecoder('utf-8',{fatal:true}).decode(complete.bytes!));
-    assert.equal(new TextDecoder('shift_jis',{fatal:true}).decode(complete.bytes!),text);
+    assert.equal(state.suites.length,1);
+    assert.equal(state.suites[0].text,text);
   }),{numRuns:20});
+});
+Deno.test('several generated parts on one image are detected and assembled',async()=>{
+  await fc.assert(fc.asyncProperty(fc.uint8Array({minLength:30,maxLength:55}),async bytes=>{
+    const parts=createStructuredAppend(bytes,{maxVersion:1});
+    const images=parts.map(part=>PNG.sync.read(makeQr(part)));
+    const gap=20,width=images.reduce((sum,image)=>sum+image.width+gap,0)+gap,height=Math.max(...images.map(image=>image.height))+gap*2;
+    const canvas=new PNG({width,height});canvas.data.fill(255);let x=gap;
+    for(const image of images){PNG.bitblt(image,canvas,0,0,image.width,image.height,x,gap);x+=image.width+gap;}
+    const codes=await readBarcodes(PNG.sync.write(canvas),{formats:['QRCode'],maxNumberOfSymbols:0});
+    assert.equal(codes.length,parts.length);
+    let state=emptyCollection();
+    for(const code of codes)state=addPart(state,{index:code.sequenceIndex,total:code.sequenceSize,parity:Number(code.sequenceId),bytes:code.bytes}).collection;
+    assert.equal(state.suites.length,1);
+    assert.deepEqual(state.suites[0].parts.flatMap(p=>[...p.bytes]),[...bytes]);
+  }),{numRuns:12});
 });

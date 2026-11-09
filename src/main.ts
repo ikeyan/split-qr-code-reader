@@ -4,7 +4,8 @@ import h from 'solid-js/h';
 import type {ReadResult} from 'zxing-wasm/reader';
 import {decode} from './decoder.ts';
 import {accept, assemble, type Assembly} from './assemble.ts';
-import {contains, type Point} from './geometry.ts';
+import {type Point} from './geometry.ts';
+import {Pointers} from './pointers.ts';
 
 function App() {
   const [state, setState] = createSignal<Assembly>(null);
@@ -17,7 +18,7 @@ function App() {
   let video!: HTMLVideoElement, camera!: HTMLDivElement;
   let stream: MediaStream | undefined;
   let generation = 0;
-  const pointers = new Map<number, Point>();
+  const pointers = new Pointers();
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', {willReadFrequently:true})!;
   let output!: HTMLTextAreaElement;
@@ -69,15 +70,14 @@ function App() {
     return [p.topLeft,p.topRight,p.bottomRight,p.bottomLeft].map(p => ({x:x+p.x*scale,y:y+p.y*scale}));
   }
   function takeAtPointers(codes: ReadResult[]) {
-    for (const point of pointers.values()) {
-      const code = codes.find(code => contains(geometry(code), point));
-      if (code) add(code);
+    for (const code of pointers.select(codes, geometry)) {
+      add(code);
       if (!active()) break;
     }
   }
   function pointer(event: PointerEvent) {
     const rect = camera.getBoundingClientRect();
-    pointers.set(event.pointerId, {x:event.clientX-rect.left,y:event.clientY-rect.top});
+    pointers.update(event.pointerId, {x:event.clientX-rect.left,y:event.clientY-rect.top});
     takeAtPointers(detected());
   }
   async function start() {
@@ -127,7 +127,7 @@ function App() {
     h('section',{class:'panel'},h('h2','01　QR コードを読み込む'),
       h('div',{class:'buttons'},h('label',{class:'file-label'},'写真を選ぶ',h('input',{type:'file',accept:'image/*',multiple:true,onChange:files})),
       h('button',{type:'button',class:'secondary',onClick:()=>active()?stop():start()},()=>active()?'カメラを停止':'カメラで読む')),
-      h('div',{class:()=>`camera ${active()?'':'hidden'}`,ref:(el:HTMLDivElement)=>{camera=el;},onPointerDown:(e:PointerEvent)=>{e.preventDefault();camera.setPointerCapture(e.pointerId);pointer(e);},onPointerMove:(e:PointerEvent)=>{if(pointers.has(e.pointerId)) pointer(e);},onPointerUp:(e:PointerEvent)=>pointers.delete(e.pointerId),onPointerCancel:(e:PointerEvent)=>pointers.delete(e.pointerId),onLostPointerCapture:(e:PointerEvent)=>pointers.delete(e.pointerId)},
+      h('div',{class:()=>`camera ${active()?'':'hidden'}`,ref:(el:HTMLDivElement)=>{camera=el;},onPointerDown:(e:PointerEvent)=>{e.preventDefault();camera.setPointerCapture(e.pointerId);pointer(e);},onPointerMove:(e:PointerEvent)=>{if(pointers.has(e.pointerId)) pointer(e);},onPointerUp:(e:PointerEvent)=>pointers.remove(e.pointerId),onPointerCancel:(e:PointerEvent)=>pointers.remove(e.pointerId),onLostPointerCapture:(e:PointerEvent)=>pointers.remove(e.pointerId)},
         h('video',{ref:(el:HTMLVideoElement)=>{video=el;},autoplay:true,muted:true,playsinline:true}),
         h('svg',{viewBox:()=>`0 0 ${viewSize().width} ${viewSize().height}`,preserveAspectRatio:'none'},()=>detected().map(code=>{const points=geometry(code);return h('g',h('polygon',{points:points.map(p=>`${p.x},${p.y}`).join(' ')}),h('text',{x:points[0].x,y:Math.max(20,points[0].y-5)},codeLabel(code)))();}))),
       h('p',{class:'muted'},()=>active()?'枠に指を置いたまま、紙を動かして連続読み取りできます。':'写真は複数枚選べます。1 枚の中の複数 QR にも対応しています。'),

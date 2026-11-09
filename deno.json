@@ -1,0 +1,24 @@
+{
+  "imports": {
+    "solid-js": "npm:solid-js@1.9.9",
+    "solid-js/h": "npm:solid-js@1.9.9/h",
+    "solid-js/web": "npm:solid-js@1.9.9/web",
+    "zxing-wasm/reader": "npm:zxing-wasm@3.1.6/reader",
+    "fast-check": "npm:fast-check@4.5.3",
+    "@nuintun/qrcode": "npm:@nuintun/qrcode@5.0.3",
+    "pngjs": "npm:pngjs@7.0.0",
+    "@kubohiroya/qrcode-structured-append": "npm:@kubohiroya/qrcode-structured-append@0.3.0"
+  },
+  "tasks": {
+    "build": "deno run -A scripts/build.ts",
+    "check": "deno check src/main.ts tests/*.ts",
+    "test": "deno test --allow-read tests"
+  },
+  "compilerOptions": {
+    "lib": [
+      "deno.window",
+      "dom",
+      "dom.iterable"
+    ]
+  }
+}

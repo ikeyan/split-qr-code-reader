@@ -10,7 +10,7 @@ export type CameraSupported=MediaTrackSupportedConstraints & {focusMode?:boolean
 export type CameraCapabilities=MediaTrackCapabilities & {focusMode?:string[];exposureMode?:string[];pointsOfInterest?:boolean;torch?:boolean[]};
 type ImageConstraints=MediaTrackConstraintSet & {focusMode?:string;exposureMode?:string;pointsOfInterest?:Point[];torch?:boolean};
 export function initialVideoConstraints(supported:CameraSupported):MediaTrackConstraints {
-  const requested={facingMode:{ideal:'environment'}} as MediaTrackConstraints & {focusMode?:{ideal:string};exposureMode?:{ideal:string}};
+  const requested={facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}} as MediaTrackConstraints & {focusMode?:{ideal:string};exposureMode?:{ideal:string}};
   if(supported.focusMode)requested.focusMode={ideal:'continuous'};
   if(supported.exposureMode)requested.exposureMode={ideal:'continuous'};
   return requested;

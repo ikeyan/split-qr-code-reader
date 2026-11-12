@@ -12,12 +12,16 @@ import {clipboardImages,readClipboardImages} from './clipboard.ts';
 import {focusAt,videoPoint,initialVideoConstraints,cameraCapabilities,setTorch,type CameraSupported} from './camera-focus.ts';
 import {prepareImage} from './images.ts';
 import {icon} from './icons.ts';
+import {Observations,type Observation} from './observed.ts';
+import type {ScanMode} from './scan.ts';
 
 function App(){
   const [collection,setCollection]=createSignal(emptyCollection());
   const [message,setMessage]=createSignal('');
   const [active,setActive]=createSignal(false);
   const [detected,setDetected]=createSignal<ReadResult[]>([]);
+  const [observed,setObserved]=createSignal<Observation[]>([]);
+  const [scanMode,setScanMode]=createSignal<ScanMode>('auto');
   const [viewSize,setViewSize]=createSignal({width:1,height:1});
   const [previews,setPreviews]=createSignal<string[]>([]);
   const [dragging,setDragging]=createSignal(false);
@@ -35,6 +39,7 @@ function App(){
   let focusTimer:ReturnType<typeof setTimeout>|undefined;
   let previewSwiped=false;
   const pointers=new Pointers();
+  const observations=new Observations();
   const canvas=document.createElement('canvas');
   const context=canvas.getContext('2d',{willReadFrequently:true})!;
 
@@ -42,8 +47,8 @@ function App(){
     generation++;
     const current=stream;stream=undefined;
     current?.getTracks().forEach(track=>track.stop());
-    pointers.clear();
-    batch(()=>{setActive(false);setDetected([]);setPreviews([]);setFocusPoint(null);setTorchAvailable(false);setTorchOn(false);setTorchBusy(false);});
+    pointers.clear();observations.clear();
+    batch(()=>{setActive(false);setDetected([]);setObserved([]);setPreviews([]);setFocusPoint(null);setTorchAvailable(false);setTorchOn(false);setTorchBusy(false);});
     video.srcObject=null;
   }
   function add(code:ReadResult,fromCamera=false){
@@ -85,14 +90,18 @@ function App(){
       stream=newStream;video.srcObject=stream;const torch=cameraCapabilities(newStream.getVideoTracks()[0]).torch;setTorchAvailable(Array.isArray(torch)?torch.includes(true):(torch as unknown)===true);setActive(true);setMessage('');
       await video.play();
       if(current!==generation)return;
+      let frame=0;
       async function scan(){
         if(current!==generation||!active())return;
         try{
           const width=video.videoWidth,height=video.videoHeight;
           if(width&&height){canvas.width=width;canvas.height=height;context.drawImage(video,0,0,width,height);
-            const codes=await decode(context.getImageData(0,0,width,height));
+            const codes=await decode(context.getImageData(0,0,width,height),scanMode(),frame++%3===0);
             if(current!==generation)return;
-            setViewSize({width:camera.clientWidth,height:camera.clientHeight});setDetected(codes);takeAtPointers(codes);
+            setViewSize({width:camera.clientWidth,height:camera.clientHeight});setDetected(codes);
+            const next=observations.update(codes,Date.now());
+            if(next.map(item=>item.key).join('\0')!==observed().map(item=>item.key).join('\0'))setObserved(next);
+            takeAtPointers(codes);
           }
         }catch{setMessage('カメラ画像を読み取れませんでした。');}
         if(current===generation&&active())setTimeout(scan,120);
@@ -110,7 +119,7 @@ function App(){
   async function readImages(images:Iterable<Blob>){
     let seen=false,found=false,failed=false;
     for(const image of images){
-      try{const prepared=await prepareImage(image);if(!prepared)continue;seen=true;const codes=await decode(prepared);if(codes.length)found=true;for(const code of codes)add(code);}
+      try{const prepared=await prepareImage(image);if(!prepared)continue;seen=true;const codes=await decode(prepared,scanMode());if(codes.length)found=true;for(const code of codes)add(code);}
       catch{seen=true;failed=true;}
     }
     if(!seen)setMessage('画像が見つかりませんでした。');
@@ -147,6 +156,7 @@ function App(){
   function preview():Suite|undefined{return collection().suites.find(s=>s.id===previews()[0]);}
   function openFull(id:string){setExpanded(id);fullDialog.showModal();}
   function expandedSuite(){return collection().suites.find(s=>s.id===expanded());}
+  function modeSelect(className:string){return h('select',{class:className,'aria-label':'読み取り方法',value:scanMode,onChange:(event:Event)=>setScanMode((event.currentTarget as HTMLSelectElement).value as ScanMode)},h('option',{value:'auto'},'自動'),h('option',{value:'standard'},'標準'),h('option',{value:'sharpen'},'輪郭補正'));}
   function resultCard(suite:Suite){
     let textarea!:HTMLTextAreaElement;
     const [copied,setCopied]=createSignal(false);
@@ -165,6 +175,7 @@ function App(){
       h('button',{type:'button',class:'icon-button primary','aria-label':'カメラで読む',title:'カメラで読む',onClick:start},icon('camera')),
       h('label',{class:'icon-button upload-button',title:'写真を選ぶ'},icon('image'),h('input',{type:'file',accept:'image/*,.heic,.heif',multiple:true,'aria-label':'写真を選ぶ',onChange:files})),
       h('button',{type:'button',class:'icon-button','aria-label':'画像を貼り付け',title:'画像を貼り付け',onClick:pasteButton},icon('paste')),
+      modeSelect('scan-mode toolbar-mode'),
       h('button',{type:'button',class:'icon-button danger reset-button','aria-label':'すべてリセット',title:'すべてリセット',onClick:reset},icon('reset'))),
     h('p',{class:'status',role:'status'},message),
     h('section',{'aria-label':'読み取り結果',class:'groups'},
@@ -179,8 +190,10 @@ function App(){
         h('svg',{viewBox:()=>`0 0 ${viewSize().width} ${viewSize().height}`,preserveAspectRatio:'none','aria-hidden':'true'},()=>detected().map(code=>{const points=geometry(code),status=hasPart(collection(),asPart(code))?'done':'new',x=points[0].x,y=Math.max(16,points[0].y-14);return h('g',{class:`qr-marker ${status}`},h('polygon',{points:points.map(p=>`${p.x},${p.y}`).join(' ')}),h('rect',{x,y:y-14,width:code.sequenceSize>0?48:30,height:26,rx:13}),h('text',{x:x+7,y:y+5},`${code.sequenceSize>0?code.sequenceIndex+1+' ':''}${status==='done'?'✓':'+'}`))();})),
         ()=>focusPoint()?h('span',{class:'focus-ring',style:{left:`${focusPoint()!.x}px`,top:`${focusPoint()!.y}px`},'aria-hidden':'true'})():null),
       ()=>torchAvailable()?h('button',{type:'button',class:()=>`icon-button camera-torch ${torchOn()?'on':''}`,'aria-label':()=>torchOn()?'ライトを消す':'ライトを点ける','aria-pressed':()=>String(torchOn()),title:'ライト',disabled:torchBusy,onClick:toggleTorch},icon('torch'))():null,
+      modeSelect('scan-mode camera-mode'),
       h('button',{type:'button',class:'icon-button camera-close','aria-label':'カメラを停止',title:'カメラを停止',onClick:stop},icon('close')),
       h('p',{class:'camera-error',role:'status'},message)),
+    ()=>active()&&observed().length?h('aside',{class:()=>`observed ${preview()?'raised':''}`,'aria-label':'認識中の QR コード'},...observed().map(item=>h('div',{class:'observed-item'},item.part?h('span',{class:'observed-part'},item.part):null,item.url?h('a',{href:item.url,target:'_blank',rel:'noopener noreferrer',class:'observed-text',title:item.url},item.text):h('span',{class:'observed-text'},item.text||'QR'))))():null,
     ()=>active()&&preview()?h('aside',{class:'preview',role:'status',onPointerDown:(e:PointerEvent)=>{previewStartX=e.clientX;previewSwiped=false;(e.target as Element).closest('button')?.setPointerCapture(e.pointerId);},onPointerUp:(e:PointerEvent)=>{if(Math.abs(e.clientX-previewStartX)>45){previewSwiped=true;dismiss();}}},
       h('button',{type:'button',class:'preview-open',onClick:()=>{const item=preview();if(item)openPreview(item.id);}},h('span',{class:'preview-text'},preview()!.text??'テキストとして表示できないデータ'),h('span',{'aria-hidden':'true',class:'preview-arrow'},'↗')),
       h('button',{type:'button',class:'preview-dismiss','aria-label':'プレビューを閉じる',onClick:()=>{if(previewSwiped){previewSwiped=false;return;}dismiss();}},icon('close')))():null,

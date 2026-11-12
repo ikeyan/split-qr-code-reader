@@ -29,7 +29,7 @@ Deno.test('camera capability errors do not interrupt scanning',async()=>{
 
 Deno.test('supported constraints are requested at start and provide fallback when capabilities are missing',async()=>{
   const supported={focusMode:true,exposureMode:true,pointsOfInterest:true};
-  assert.deepEqual(initialVideoConstraints(supported),{facingMode:{ideal:'environment'},focusMode:{ideal:'continuous'},exposureMode:{ideal:'continuous'}});
+  assert.deepEqual(initialVideoConstraints(supported),{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720},focusMode:{ideal:'continuous'},exposureMode:{ideal:'continuous'}});
   const calls:MediaTrackConstraints[]=[];
   const track={getCapabilities:()=>({}),getConstraints:()=>({advanced:[{torch:true}]}),applyConstraints:(value:MediaTrackConstraints)=>{calls.push(value);return Promise.resolve();}} as unknown as MediaStreamTrack;
   assert.equal(await focusAt(track,{x:0.25,y:0.75},supported),true);

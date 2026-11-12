@@ -96,7 +96,8 @@ function App(){
         try{
           const width=video.videoWidth,height=video.videoHeight;
           if(width&&height){canvas.width=width;canvas.height=height;context.drawImage(video,0,0,width,height);
-            const codes=await decode(context.getImageData(0,0,width,height),scanMode(),frame++%3===0);
+            const currentFrame=frame++;
+            const codes=await decode(context.getImageData(0,0,width,height),scanMode(),currentFrame%3===0,scanMode()==='curve'?currentFrame:Math.floor(currentFrame/3));
             if(current!==generation)return;
             setViewSize({width:camera.clientWidth,height:camera.clientHeight});setDetected(codes);
             const next=observations.update(codes,Date.now());
@@ -156,7 +157,7 @@ function App(){
   function preview():Suite|undefined{return collection().suites.find(s=>s.id===previews()[0]);}
   function openFull(id:string){setExpanded(id);fullDialog.showModal();}
   function expandedSuite(){return collection().suites.find(s=>s.id===expanded());}
-  function modeSelect(className:string){return h('select',{class:className,'aria-label':'読み取り方法',value:scanMode,onChange:(event:Event)=>setScanMode((event.currentTarget as HTMLSelectElement).value as ScanMode)},h('option',{value:'auto'},'自動'),h('option',{value:'standard'},'標準'),h('option',{value:'sharpen'},'輪郭補正'));}
+  function modeSelect(className:string){return h('select',{class:className,'aria-label':'読み取り方法',value:scanMode,onChange:(event:Event)=>setScanMode((event.currentTarget as HTMLSelectElement).value as ScanMode)},h('option',{value:'auto'},'自動'),h('option',{value:'standard'},'標準'),h('option',{value:'sharpen'},'輪郭補正'),h('option',{value:'curve'},'曲面補正'),h('option',{value:'shadow'},'影補正'));}
   function resultCard(suite:Suite){
     let textarea!:HTMLTextAreaElement;
     const [copied,setCopied]=createSignal(false);

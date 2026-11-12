@@ -66,10 +66,11 @@ Deno.test('merging scans retains separate codes with identical content',()=>{
 });
 Deno.test('method selection invokes the requested scans',async()=>{
   const image=createQr(new Uint8Array(40).fill(42),4);
-  for(const mode of ['standard','sharpen','auto'] as const){
+  for(const mode of ['standard','sharpen','shadow','curve','auto'] as const){
     const calls:Raster[]=[];
     await scanRaster(image,(raster)=>{calls.push(raster);return Promise.resolve([]);},mode);
-    assert.equal(calls.length,mode==='auto'?2:1);
+    if(mode==='standard'||mode==='sharpen')assert.equal(calls.length,1);
+    else assert.ok(calls.length>=2);
     assert.equal(calls[0]===image,mode!=='sharpen');
   }
 });

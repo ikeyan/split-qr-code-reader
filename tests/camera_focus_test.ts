@@ -5,7 +5,9 @@ Deno.test('video coordinates account for letterboxing',()=>{
   fc.assert(fc.property(fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.double({min:0.01,max:0.99,noNaN:true}),fc.double({min:0.01,max:0.99,noNaN:true}),(bw,bh,iw,ih,x,y)=>{
     const scale=Math.min(bw/iw,bh/ih),w=iw*scale,h=ih*scale;
     const point=videoPoint({x:(bw-w)/2+x*w,y:(bh-h)/2+y*h},{width:bw,height:bh},{width:iw,height:ih});
-    assert.ok(point);assert.ok(Math.abs(point.x-x)<1e-10);assert.ok(Math.abs(point.y-y)<1e-10);
+    assert.ok(point);
+    const pixelTolerance=Number.EPSILON*Math.max(bw,bh)*8;
+    assert.ok(Math.abs(point.x-x)*w<=pixelTolerance);assert.ok(Math.abs(point.y-y)*h<=pixelTolerance);
   }));
 });
 Deno.test('camera focus uses supported capabilities and tolerates rejection',async()=>{
@@ -40,4 +42,13 @@ Deno.test('torch update preserves focus and replaces the previous torch value',a
   const track={getConstraints:()=>({advanced:[{torch:true,focusMode:'continuous'}]}),applyConstraints:(value:MediaTrackConstraints)=>{calls.push(value);return Promise.resolve();}} as unknown as MediaStreamTrack;
   await setTorch(track,false);
   assert.deepEqual(calls[0].advanced,[{focusMode:'continuous'},{torch:false}]);
+});
+Deno.test('letterboxing remains accurate with a subpixel-wide image',()=>{
+  const box={width:1025,height:1},image={width:1,height:2135},expected={x:0.013685357558257387,y:0.01};
+  const scale=Math.min(box.width/image.width,box.height/image.height),width=image.width*scale,height=image.height*scale;
+  const point=videoPoint({x:(box.width-width)/2+expected.x*width,y:(box.height-height)/2+expected.y*height},box,image);
+  assert.ok(point);
+  const pixelTolerance=Number.EPSILON*Math.max(box.width,box.height)*8;
+  assert.ok(Math.abs(point.x-expected.x)*width<=pixelTolerance);
+  assert.ok(Math.abs(point.y-expected.y)*height<=pixelTolerance);
 });

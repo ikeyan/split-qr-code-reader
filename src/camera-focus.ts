@@ -15,7 +15,7 @@ export type CameraSupported=MediaTrackSupportedConstraints & {focusMode?:boolean
 export type CameraCapabilities=MediaTrackCapabilities & {focusMode?:string[];exposureMode?:string[];pointsOfInterest?:boolean;torch?:boolean[]};
 type ImageConstraints=MediaTrackConstraintSet & {focusMode?:string;exposureMode?:string;pointsOfInterest?:Point[];torch?:boolean};
 export function initialVideoConstraints(supported:CameraSupported):MediaTrackConstraints {
-  const requested={facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}} as MediaTrackConstraints & {focusMode?:{ideal:string};exposureMode?:{ideal:string}};
+  const requested={facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}} as MediaTrackConstraints & {focusMode?:{ideal:string};exposureMode?:{ideal:string}};
   if(supported.focusMode)requested.focusMode={ideal:'continuous'};
   if(supported.exposureMode)requested.exposureMode={ideal:'continuous'};
   return requested;
@@ -28,6 +28,14 @@ async function applyCamera(track:MediaStreamTrack,updates:ImageConstraints[],key
   const current=typeof track.getConstraints==='function'?track.getConstraints():{};
   const prior=(current.advanced??[]).map(entry=>Object.fromEntries(Object.entries(entry).filter(([key])=>!keys.includes(key))) as MediaTrackConstraintSet).filter(entry=>Object.keys(entry).length);
   await track.applyConstraints({...current,advanced:[...prior,...updates]});
+}
+/** Some devices expose controls on the track but omit them from supportedConstraints. */
+export async function continuousCamera(track:MediaStreamTrack):Promise<boolean>{
+  const caps=cameraCapabilities(track),updates:ImageConstraints[]=[];
+  if(caps.focusMode?.includes('continuous'))updates.push({focusMode:'continuous'});
+  if(caps.exposureMode?.includes('continuous'))updates.push({exposureMode:'continuous'});
+  if(!updates.length)return false;
+  try{await applyCamera(track,updates,['focusMode','exposureMode']);return true;}catch{return false;}
 }
 export async function focusAt(track:MediaStreamTrack,point:Point,supported:CameraSupported={}):Promise<boolean>{
   const caps=cameraCapabilities(track);

@@ -11,6 +11,9 @@ try {
   await Deno.stdout.write(result.stdout);
   await Deno.stderr.write(result.stderr);
   if (!result.success) Deno.exit(result.code);
+  const worker = await new Deno.Command(Deno.execPath(),{args:['bundle','--platform=browser','src/camera-worker.ts','--output','dist/camera-worker.js']}).output();
+  await Deno.stderr.write(worker.stderr);
+  if(!worker.success)Deno.exit(worker.code);
   await Deno.copyFile('src/style.css', 'dist/style.css');
   await Deno.copyFile('vendor/heic-to.js', 'dist/heic-to.js');
   const html=await Deno.readTextFile('dist/index.html');

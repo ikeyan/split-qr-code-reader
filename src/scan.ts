@@ -1,5 +1,5 @@
 import type {ReadResult,ReaderOptions} from 'zxing-wasm/reader';
-import {sharpen,type Raster} from './image-enhance.ts';
+import {resizeRaster,sharpen,type Raster} from './image-enhance.ts';
 import {candidateRegions,cropRaster,curveVariants,flattenCurve,mapCurvePositions,type Region,type QrCandidate} from './curvature.ts';
 import {correctIllumination,limitRaster} from './illumination.ts';
 import {fitQrSurfaces,sampleQrSurface} from './qr-surface.ts';
@@ -9,7 +9,7 @@ export type RasterReader=(image:Raster,options:Partial<ReaderOptions>)=>Promise<
 export const scanOptions:Partial<ReaderOptions>={formats:['QRCode'],tryHarder:true,tryDenoise:true,maxNumberOfSymbols:0};
 export const locatingOptions:Partial<ReaderOptions>={...scanOptions,returnErrors:true};
 export function validReads(reads:ReadResult[]):ReadResult[]{return reads.filter(result=>result.isValid!==false);}
-function sameLocation(a:Pick<ReadResult,'position'>,b:Pick<ReadResult,'position'>):boolean {
+export function sameLocation(a:Pick<ReadResult,'position'>,b:Pick<ReadResult,'position'>):boolean {
   const points=(r:Pick<ReadResult,'position'>)=>[r.position.topLeft,r.position.topRight,r.position.bottomRight,r.position.bottomLeft];
   const ap=points(a),bp=points(b);
   const center=(p:typeof ap)=>({x:p.reduce((n,p)=>n+p.x,0)/4,y:p.reduce((n,p)=>n+p.y,0)/4});
@@ -53,7 +53,9 @@ async function fittedReads(image:Raster,reader:RasterReader,raw:ReadResult[],cyc
     if(results.some(code=>sameLocation(code,candidate)))continue;
     try{
       const region=candidateRegions(image,[candidate])[0];if(!region)continue;
-      const source=limitRaster(cropRaster(image,region),960),scaleX=region.width/source.width,scaleY=region.height/source.height;
+      const limited=limitRaster(cropRaster(image,region),960);
+      const factor=Math.min(3,Math.max(1,320/Math.min(limited.width,limited.height)),960/Math.max(limited.width,limited.height));
+      const source=resizeRaster(limited,Math.round(limited.width*factor),Math.round(limited.height*factor)),scaleX=region.width/source.width,scaleY=region.height/source.height;
       const local=(p:{x:number;y:number})=>({x:(p.x-region.x)/scaleX,y:(p.y-region.y)/scaleY});
       const p=candidate.position,localized={...candidate,position:{topLeft:local(p.topLeft),topRight:local(p.topRight),bottomRight:local(p.bottomRight),bottomLeft:local(p.bottomLeft)}};
       for(const surface of fitQrSurfaces(source,localized,cycle===undefined?undefined:Math.floor(cycle/candidates.length))){

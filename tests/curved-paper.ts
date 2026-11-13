@@ -6,7 +6,7 @@ import type { Raster } from "../src/image-enhance.ts";
  * A textured cylinder is rotated in 3D and perspective projected, then rasterized
  * as triangles with perspective-correct texture coordinates at 2x resolution.
  */
-export function curvedPaper(seed: number, index: number) {
+export function curvedPaper(seed: number, index: number, options: {angle?:number;roll?:number} = {}) {
   let state = seed >>> 0;
   const random = () => {
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
@@ -45,19 +45,19 @@ export function curvedPaper(seed: number, index: number) {
       ) pixels[y * w + x] = 90;
     }
   }
-  const angle = range(.65, 1.2) * (Math.floor(index / 16) % 2 === 0 ? 1 : -1),
+  const angle = options.angle ?? range(.65, 1.2) * (Math.floor(index / 16) % 2 === 0 ? 1 : -1),
     vertical = Math.floor(index / 8) % 2 === 0;
   const yaw = range(-.22, .22),
     pitch = range(-.22, .22),
-    roll = range(-.35, .35),
+    roll = options.roll ?? range(-.35, .35),
     distance = range(3.5, 5);
   const scale = range(145, 185) * ss,
     cx = range(285, 320) * ss,
     cy = range(405, 440) * ss;
   const project = (u: number, v: number) => {
     const t = vertical ? v : u, cross = vertical ? u : v;
-    const bent = Math.sin(angle * t) / angle,
-      z = (1 - Math.cos(angle * t)) / angle;
+    const bent = angle ? Math.sin(angle * t) / angle : t,
+      z = angle ? (1 - Math.cos(angle * t)) / angle : 0;
     const x = vertical ? cross : bent, y = vertical ? bent : cross;
     const xx = Math.cos(yaw) * x + Math.sin(yaw) * z,
       zz = -Math.sin(yaw) * x + Math.cos(yaw) * z;

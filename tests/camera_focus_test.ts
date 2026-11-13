@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import {strict as assert} from 'node:assert';
-import {focusAt,videoFrame,videoPoint,initialVideoConstraints,setTorch} from '../src/camera-focus.ts';
+import {focusAt,videoFrame,videoPoint,initialVideoConstraints,continuousCamera,setTorch} from '../src/camera-focus.ts';
  Deno.test('cover maps visible coordinates to the same source pixels as the overlay',()=>{
   fc.assert(fc.property(fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.double({min:0,max:1,noNaN:true}),fc.double({min:0,max:1,noNaN:true}),(bw,bh,iw,ih,x,y)=>{
     const box={width:bw,height:bh},image={width:iw,height:ih};
@@ -43,7 +43,7 @@ Deno.test('camera capability errors do not interrupt scanning',async()=>{
 
 Deno.test('supported constraints are requested at start and provide fallback when capabilities are missing',async()=>{
   const supported={focusMode:true,exposureMode:true,pointsOfInterest:true};
-  assert.deepEqual(initialVideoConstraints(supported),{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720},focusMode:{ideal:'continuous'},exposureMode:{ideal:'continuous'}});
+  assert.deepEqual(initialVideoConstraints(supported),{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080},focusMode:{ideal:'continuous'},exposureMode:{ideal:'continuous'}});
   const calls:MediaTrackConstraints[]=[];
   const track={getCapabilities:()=>({}),getConstraints:()=>({advanced:[{torch:true}]}),applyConstraints:(value:MediaTrackConstraints)=>{calls.push(value);return Promise.resolve();}} as unknown as MediaStreamTrack;
   assert.equal(await focusAt(track,{x:0.25,y:0.75},supported),true);
@@ -64,3 +64,16 @@ Deno.test('letterboxing remains accurate with a subpixel-wide image',()=>{
   assert.ok(Math.abs(point.x-expected.x)*width<=pixelTolerance);
   assert.ok(Math.abs(point.y-expected.y)*height<=pixelTolerance);
 });
+ Deno.test('continuous camera controls use track capabilities and retain existing constraints',async()=>{
+  const applied:MediaTrackConstraints[]=[];
+  const track={getCapabilities:()=>({focusMode:['continuous'],exposureMode:['continuous']}),getConstraints:()=>({width:{ideal:1920},advanced:[{torch:true}]}),applyConstraints:(value:MediaTrackConstraints)=>{applied.push(value);return Promise.resolve();}} as unknown as MediaStreamTrack;
+  assert.equal(await continuousCamera(track),true);
+  assert.deepEqual(applied,[{width:{ideal:1920},advanced:[{torch:true},{focusMode:'continuous'},{exposureMode:'continuous'}]}]);
+ });
+ Deno.test('unsupported or rejected continuous focus keeps the camera usable',async()=>{
+  let calls=0;
+  const unsupported={getCapabilities:()=>({}),applyConstraints:()=>{calls++;return Promise.resolve();}} as unknown as MediaStreamTrack;
+  assert.equal(await continuousCamera(unsupported),false);assert.equal(calls,0);
+  const rejected={getCapabilities:()=>({focusMode:['continuous']}),applyConstraints:()=>Promise.reject(new Error('unsupported'))} as unknown as MediaStreamTrack;
+  assert.equal(await continuousCamera(rejected),false);
+ });

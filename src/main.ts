@@ -9,13 +9,14 @@ import {contains,type Point} from './geometry.ts';
 import {Pointers} from './pointers.ts';
 import {enqueuePreviews,dismissPreview,retainPreviews} from './previews.ts';
 import {clipboardImages,readClipboardImages} from './clipboard.ts';
-import {focusAt,videoFrame,videoPoint,initialVideoConstraints,cameraCapabilities,setTorch,type CameraSupported} from './camera-focus.ts';
+import {focusAt,videoFrame,videoPoint,initialVideoConstraints,cameraCapabilities,continuousCamera,setTorch,type CameraSupported} from './camera-focus.ts';
 import {prepareImage} from './images.ts';
 import {icon} from './icons.ts';
 import {Observations,type Observation} from './observed.ts';
 import type {ScanMode} from './scan.ts';
 import {CameraRecovery} from './camera-recovery.ts';
 import {CameraRecording,createCameraRecorder,recordingFilename,type RecordingPhase} from './camera-recording.ts';
+import {CameraDecoder} from './camera-decoder.ts';
 
 const revision=document.querySelector<HTMLMetaElement>('meta[name="build-commit"]')?.content??'';
 const buildCommit=/^[0-9a-f]{40}$/.test(revision)?revision:'開発版';
@@ -65,6 +66,7 @@ function App(){
   let previewSwiped=false;
   const pointers=new Pointers();
   const observations=new Observations();
+  const cameraDecoder=new CameraDecoder();
   const canvas=document.createElement('canvas');
   const context=canvas.getContext('2d',{willReadFrequently:true})!;
 
@@ -111,19 +113,20 @@ function App(){
     try{
       supported=typeof navigator.mediaDevices.getSupportedConstraints==='function'?navigator.mediaDevices.getSupportedConstraints() as CameraSupported:{};
       const newStream=await navigator.mediaDevices.getUserMedia({video:initialVideoConstraints(supported),audio:false});
+      await continuousCamera(newStream.getVideoTracks()[0]);
       if(current!==generation){newStream.getTracks().forEach(track=>track.stop());return;}
       stream=newStream;video.srcObject=stream;const torch=cameraCapabilities(newStream.getVideoTracks()[0]).torch;setTorchAvailable(Array.isArray(torch)?torch.includes(true):(torch as unknown)===true);setActive(true);setMessage('');
       await video.play();
       if(current!==generation)return;
-      let frame=0;
+      await cameraDecoder.reset();
+      if(current!==generation)return;
       async function scan(){
         if(current!==generation||!active())return;
         if(document.hidden){setTimeout(scan,250);return;}
         try{
           const width=video.videoWidth,height=video.videoHeight;
           if(width&&height){canvas.width=width;canvas.height=height;context.drawImage(video,0,0,width,height);
-            const currentFrame=frame++;
-            const codes=await decode(context.getImageData(0,0,width,height),scanMode(),currentFrame%3===0,scanMode()==='curve'?currentFrame:Math.floor(currentFrame/3));
+            const codes=await cameraDecoder.scan(context.getImageData(0,0,width,height),scanMode());
             if(current!==generation)return;
             setViewSize({width:camera.clientWidth,height:camera.clientHeight});setDetected(codes);
             const next=observations.update(codes,Date.now());
@@ -186,7 +189,7 @@ function App(){
   const onPageShow=()=>{void recovery.resume();};
   document.addEventListener('visibilitychange',onVisibility);window.addEventListener('pageshow',onPageShow);
   document.addEventListener('paste',onPaste);document.addEventListener('dragenter',dragEnter);document.addEventListener('dragover',dragOver);document.addEventListener('dragleave',dragLeave);document.addEventListener('drop',onDrop);
-  onCleanup(()=>{stop();clearTimeout(focusTimer);document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('pageshow',onPageShow);document.removeEventListener('paste',onPaste);document.removeEventListener('dragenter',dragEnter);document.removeEventListener('dragover',dragOver);document.removeEventListener('dragleave',dragLeave);document.removeEventListener('drop',onDrop);});
+  onCleanup(()=>{stop();cameraDecoder.dispose();clearTimeout(focusTimer);document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('pageshow',onPageShow);document.removeEventListener('paste',onPaste);document.removeEventListener('dragenter',dragEnter);document.removeEventListener('dragover',dragOver);document.removeEventListener('dragleave',dragLeave);document.removeEventListener('drop',onDrop);});
   function reset(){if(fullDialog.open)fullDialog.close();batch(()=>{setExpanded(null);setCollection(emptyCollection());setPreviews([]);setMessage('');});}
   function remove(id:string){
     if(expanded()===id&&fullDialog.open)fullDialog.close();

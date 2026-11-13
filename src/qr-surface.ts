@@ -8,6 +8,7 @@ type Mark = { u: number; v: number; dark: boolean };
 type Surface = {
   size: number;
   score: number;
+  parameters: number[];
   map: (u: number, v: number) => Point;
 };
 
@@ -120,6 +121,7 @@ export function* fitQrSurfaces(
   image: Raster,
   candidate: QrCandidate,
   cycle?: number,
+  initial?: {size:number;parameters:number[]},
 ): Generator<Surface> {
   const binary = correctIllumination(image, "mean"), { width, height } = image;
   const smooth = new Float32Array(width * height);
@@ -170,6 +172,7 @@ export function* fitQrSurfaces(
           parameters[3] =
             (1 - 7 / (17 + 4 * estimated)) / (1 - 7 / size) - 1;
       }
+      if(initial?.size===size)parameters.splice(0,16,...initial.parameters);
       const finders = template.filter((m) => {
         const x = (m.u + 1) * size / 2, y = (m.v + 1) * size / 2;
         return (x < 8 && y < 8) || (x > size - 8 && y < 8) ||
@@ -317,7 +320,7 @@ export function* fitQrSurfaces(
             determinant * orientation > 0;
         }
       }
-      if (sane) yield { size, score, map };
+      if (sane) yield { size, score, map, parameters };
     }
   }
 }

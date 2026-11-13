@@ -2,9 +2,14 @@ import {prepareZXingModule,readBarcodes,type ReadResult} from 'zxing-wasm/reader
 import wasm from './wasm-data.ts';
 import {curvedReads,enhancedReads,locatingOptions,mergeReads,scanRaster,shadowReads,validReads,type ScanMode,type RasterReader} from './scan.ts';
 import type {Raster} from './image-enhance.ts';
+import {VideoScanner} from './video-scan.ts';
 const binary=Uint8Array.from(atob(wasm),c=>c.charCodeAt(0));
 const ready=prepareZXingModule({overrides:{wasmBinary:binary},fireImmediately:true});
 const rasterReader:RasterReader=(image,options)=>readBarcodes(new ImageData(image.data as Uint8ClampedArray<ArrayBuffer>,image.width,image.height),options);
+export function createVideoDecoder(){
+  const scanner=new VideoScanner();
+  return async(image:ImageData,mode:ScanMode)=>{await ready;return scanner.scan(image,rasterReader,mode);};
+}
 async function rasterize(blob:Blob):Promise<{raster:Raster;scaleX:number;scaleY:number}>{
   let source:ImageBitmap|HTMLImageElement|undefined;
   let objectUrl:string|undefined;

@@ -31,3 +31,15 @@ export function sharpen(image:Raster, radius=2, strength=1.8):Raster {
   }
   return {width,height,data:result};
 }
+/** Bilinear resampling keeps small camera modules usable for local thresholds. */
+export function resizeRaster(image:Raster,width:number,height:number):Raster {
+  if(width===image.width&&height===image.height)return image;
+  const data=new Uint8ClampedArray(width*height*4);
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+    const sx=Math.max(0,Math.min(image.width-1,(x+.5)*image.width/width-.5)),sy=Math.max(0,Math.min(image.height-1,(y+.5)*image.height/height-.5));
+    const ix=Math.floor(sx),iy=Math.floor(sy),fx=sx-ix,fy=sy-iy;
+    const a=(iy*image.width+ix)*4,b=(iy*image.width+Math.min(ix+1,image.width-1))*4,c=(Math.min(iy+1,image.height-1)*image.width+ix)*4,d=(Math.min(iy+1,image.height-1)*image.width+Math.min(ix+1,image.width-1))*4;
+    for(let k=0;k<4;k++)data[(y*width+x)*4+k]=image.data[a+k]*(1-fx)*(1-fy)+image.data[b+k]*fx*(1-fy)+image.data[c+k]*(1-fx)*fy+image.data[d+k]*fx*fy;
+  }
+  return {width,height,data};
+}

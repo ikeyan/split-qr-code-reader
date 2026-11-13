@@ -12,7 +12,7 @@
   },
   "tasks": {
     "build": "deno run -A scripts/build.ts",
-    "check": "deno check src/main.ts scripts/verify-png.ts tests/*.ts",
+    "check": "deno check src/main.ts src/camera-worker.ts scripts/verify-png.ts tests/*.ts",
     "test": "deno test --allow-read tests",
     "verify-png": "deno run --allow-read scripts/verify-png.ts"
   },

@@ -9,11 +9,12 @@ import {contains,type Point} from './geometry.ts';
 import {Pointers} from './pointers.ts';
 import {enqueuePreviews,dismissPreview,retainPreviews} from './previews.ts';
 import {clipboardImages,readClipboardImages} from './clipboard.ts';
-import {focusAt,videoPoint,initialVideoConstraints,cameraCapabilities,setTorch,type CameraSupported} from './camera-focus.ts';
+import {focusAt,videoFrame,videoPoint,initialVideoConstraints,cameraCapabilities,setTorch,type CameraSupported} from './camera-focus.ts';
 import {prepareImage} from './images.ts';
 import {icon} from './icons.ts';
 import {Observations,type Observation} from './observed.ts';
 import type {ScanMode} from './scan.ts';
+import {CameraRecovery} from './camera-recovery.ts';
 
 function App(){
   const [collection,setCollection]=createSignal(emptyCollection());
@@ -62,10 +63,9 @@ function App(){
     });
   }
   function geometry(code:ReadResult):Point[]{
-    const {width,height}=viewSize();
-    const scale=Math.min(width/video.videoWidth,height/video.videoHeight);
-    const x=(width-video.videoWidth*scale)/2,y=(height-video.videoHeight*scale)/2,p=code.position;
-    return [p.topLeft,p.topRight,p.bottomRight,p.bottomLeft].map(p=>({x:x+p.x*scale,y:y+p.y*scale}));
+    const frame=videoFrame(viewSize(),{width:video.videoWidth,height:video.videoHeight},'cover'),p=code.position;
+    if(!frame)return [];
+    return [p.topLeft,p.topRight,p.bottomRight,p.bottomLeft].map(p=>({x:frame.x+p.x*frame.scale,y:frame.y+p.y*frame.scale}));
   }
   function takeAtPointers(codes:ReadResult[]){for(const code of pointers.select(codes,geometry))add(code,true);}
   function pointer(event:PointerEvent){const rect=camera.getBoundingClientRect();pointers.update(event.pointerId,{x:event.clientX-rect.left,y:event.clientY-rect.top});takeAtPointers(detected());}
@@ -75,7 +75,7 @@ function App(){
     const rect=camera.getBoundingClientRect();
     const point={x:event.clientX-rect.left,y:event.clientY-rect.top};
     if(detected().some(code=>contains(geometry(code),point)))return;
-    const normalized=videoPoint(point,{width:rect.width,height:rect.height},{width:video.videoWidth,height:video.videoHeight});
+    const normalized=videoPoint(point,{width:rect.width,height:rect.height},{width:video.videoWidth,height:video.videoHeight},'cover');
     if(normalized&&await cameraTask(()=>focusAt(track,normalized,supported))&&active()&&stream?.getVideoTracks()[0]===track){
       setFocusPoint(point);clearTimeout(focusTimer);focusTimer=setTimeout(()=>setFocusPoint(null),900);
     }
@@ -93,6 +93,7 @@ function App(){
       let frame=0;
       async function scan(){
         if(current!==generation||!active())return;
+        if(document.hidden){setTimeout(scan,250);return;}
         try{
           const width=video.videoWidth,height=video.videoHeight;
           if(width&&height){canvas.width=width;canvas.height=height;context.drawImage(video,0,0,width,height);
@@ -110,6 +111,20 @@ function App(){
       scan();
     }catch{if(current===generation){stop();setMessage('カメラを利用できません。ブラウザーの許可設定を確認してください。');}}
   }
+  const recovery=new CameraRecovery({
+    eligible:()=>!document.hidden&&active()&&!!stream,
+    ended:()=>stream!.getVideoTracks().every(track=>track.readyState==='ended'),
+    restart:async()=>{stop();await start();},
+    reconnect:async()=>{
+      const current=generation,previous=stream!;
+      try{
+      // Reattach the live stream so Safari rebuilds its video layer after a background interruption.
+      video.srcObject=null;video.srcObject=previous;
+      await video.play();
+      if(current===generation)setViewSize({width:camera.clientWidth,height:camera.clientHeight});
+      }catch{if(current===generation)setMessage('カメラを再開できませんでした。');}
+    },
+  });
   async function toggleTorch(){
     const track=stream?.getVideoTracks()[0];if(!track||torchBusy())return;
     const desired=!torchOn();setTorchBusy(true);
@@ -138,8 +153,11 @@ function App(){
   const dragOver=(event:DragEvent)=>{if(isFiles(event)){event.preventDefault();if(event.dataTransfer)event.dataTransfer.dropEffect='copy';}};
   const dragLeave=(event:DragEvent)=>{if(isFiles(event)){dragDepth=Math.max(0,dragDepth-1);if(!dragDepth)setDragging(false);}};
   const onDrop=(event:DragEvent)=>{if(isFiles(event)){event.preventDefault();dragDepth=0;setDragging(false);void readImages(Array.from(event.dataTransfer?.files??[]));}};
+  const onVisibility=()=>{if(!document.hidden)void recovery.resume();};
+  const onPageShow=()=>{void recovery.resume();};
+  document.addEventListener('visibilitychange',onVisibility);window.addEventListener('pageshow',onPageShow);
   document.addEventListener('paste',onPaste);document.addEventListener('dragenter',dragEnter);document.addEventListener('dragover',dragOver);document.addEventListener('dragleave',dragLeave);document.addEventListener('drop',onDrop);
-  onCleanup(()=>{stop();clearTimeout(focusTimer);document.removeEventListener('paste',onPaste);document.removeEventListener('dragenter',dragEnter);document.removeEventListener('dragover',dragOver);document.removeEventListener('dragleave',dragLeave);document.removeEventListener('drop',onDrop);});
+  onCleanup(()=>{stop();clearTimeout(focusTimer);document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('pageshow',onPageShow);document.removeEventListener('paste',onPaste);document.removeEventListener('dragenter',dragEnter);document.removeEventListener('dragover',dragOver);document.removeEventListener('dragleave',dragLeave);document.removeEventListener('drop',onDrop);});
   function reset(){if(fullDialog.open)fullDialog.close();batch(()=>{setExpanded(null);setCollection(emptyCollection());setPreviews([]);setMessage('');});}
   function remove(id:string){
     if(expanded()===id&&fullDialog.open)fullDialog.close();

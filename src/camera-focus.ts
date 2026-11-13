@@ -1,10 +1,15 @@
 import type {Point} from './geometry.ts';
-export function videoPoint(point:Point,box:{width:number;height:number},image:{width:number;height:number}):Point|null {
+export function videoFrame(box:{width:number;height:number},image:{width:number;height:number},fit:'contain'|'cover'='contain') {
   if(box.width<=0||box.height<=0||image.width<=0||image.height<=0)return null;
-  const scale=Math.min(box.width/image.width,box.height/image.height);
+  const scale=(fit==='cover'?Math.max:Math.min)(box.width/image.width,box.height/image.height);
   const width=image.width*scale,height=image.height*scale;
-  const x=(point.x-(box.width-width)/2)/width,y=(point.y-(box.height-height)/2)/height;
-  return x>=0&&x<=1&&y>=0&&y<=1?{x,y}:null;
+  return {x:(box.width-width)/2,y:(box.height-height)/2,width,height,scale};
+}
+export function videoPoint(point:Point,box:{width:number;height:number},image:{width:number;height:number},fit:'contain'|'cover'='contain'):Point|null {
+  const frame=videoFrame(box,image,fit);if(!frame)return null;
+  const x=(point.x-frame.x)/frame.width,y=(point.y-frame.y)/frame.height;
+  const tolerance=1e-12;
+  return x>=-tolerance&&x<=1+tolerance&&y>=-tolerance&&y<=1+tolerance?{x:Math.max(0,Math.min(1,x)),y:Math.max(0,Math.min(1,y))}:null;
 }
 export type CameraSupported=MediaTrackSupportedConstraints & {focusMode?:boolean;exposureMode?:boolean;pointsOfInterest?:boolean;torch?:boolean};
 export type CameraCapabilities=MediaTrackCapabilities & {focusMode?:string[];exposureMode?:string[];pointsOfInterest?:boolean;torch?:boolean[]};

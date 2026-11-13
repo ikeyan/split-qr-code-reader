@@ -1,6 +1,18 @@
 import fc from 'fast-check';
 import {strict as assert} from 'node:assert';
-import {focusAt,videoPoint,initialVideoConstraints,setTorch} from '../src/camera-focus.ts';
+import {focusAt,videoFrame,videoPoint,initialVideoConstraints,setTorch} from '../src/camera-focus.ts';
+ Deno.test('cover maps visible coordinates to the same source pixels as the overlay',()=>{
+  fc.assert(fc.property(fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.double({min:0,max:1,noNaN:true}),fc.double({min:0,max:1,noNaN:true}),(bw,bh,iw,ih,x,y)=>{
+    const box={width:bw,height:bh},image={width:iw,height:ih};
+    const frame=videoFrame(box,image,'cover')!;
+    assert.ok(frame.width>=bw-1e-9&&frame.height>=bh-1e-9);
+    const screen={x:x*bw,y:y*bh};
+    const point=videoPoint(screen,box,image,'cover')!;
+    assert.ok(point.x>=0&&point.x<=1&&point.y>=0&&point.y<=1);
+    assert.ok(Math.abs(frame.x+point.x*frame.width-screen.x)<1e-8);
+    assert.ok(Math.abs(frame.y+point.y*frame.height-screen.y)<1e-8);
+  }));
+});
 Deno.test('video coordinates account for letterboxing',()=>{
   fc.assert(fc.property(fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.integer({min:1,max:4000}),fc.double({min:0.01,max:0.99,noNaN:true}),fc.double({min:0.01,max:0.99,noNaN:true}),(bw,bh,iw,ih,x,y)=>{
     const scale=Math.min(bw/iw,bh/ih),w=iw*scale,h=ih*scale;

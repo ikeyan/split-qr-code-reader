@@ -1,16 +1,16 @@
 import type {Raster} from './image-enhance.ts';
-/** Local mean and variance (Sauvola threshold), using summed-area tables. */
-export function correctIllumination(image:Raster):Raster {
+/** Local thresholds computed with summed-area tables. */
+export function correctIllumination(image:Raster,method:'sauvola'|'mean'='sauvola'):Raster {
   const {width,height,data}=image,stride=width+1;
-  const sum=new Float64Array((width+1)*(height+1)),squared=new Float64Array(sum.length),gray=new Uint8Array(width*height);
+  const sum=new Float64Array((width+1)*(height+1)),squared=method==='sauvola'?new Float64Array(sum.length):null,gray=new Uint8Array(width*height);
   for(let y=0;y<height;y++){
     let row=0,rowSquared=0;
     for(let x=0;x<width;x++){
       const index=y*width+x,j=index*4,alpha=data[j+3]/255;
       const value=Math.round((data[j]*0.299+data[j+1]*0.587+data[j+2]*0.114)*alpha+255*(1-alpha));
-      gray[index]=value;row+=value;rowSquared+=value*value;
+      gray[index]=value;row+=value;if(squared)rowSquared+=value*value;
       const cell=(y+1)*stride+x+1;
-      sum[cell]=sum[cell-stride]+row;squared[cell]=squared[cell-stride]+rowSquared;
+      sum[cell]=sum[cell-stride]+row;if(squared)squared[cell]=squared[cell-stride]+rowSquared;
     }
   }
   const radius=Math.max(8,Math.min(40,Math.round(Math.min(width,height)/10))),out=new Uint8ClampedArray(width*height*4);
@@ -18,8 +18,8 @@ export function correctIllumination(image:Raster):Raster {
     const left=Math.max(0,x-radius),right=Math.min(width,x+radius+1),top=Math.max(0,y-radius),bottom=Math.min(height,y+radius+1);
     const a=top*stride+left,b=top*stride+right,c=bottom*stride+left,d=bottom*stride+right,count=(right-left)*(bottom-top);
     const mean=(sum[d]-sum[b]-sum[c]+sum[a])/count;
-    const variance=Math.max(0,(squared[d]-squared[b]-squared[c]+squared[a])/count-mean*mean);
-    const threshold=mean*(1+0.1*(Math.sqrt(variance)/128-1));
+    const variance=squared?Math.max(0,(squared[d]-squared[b]-squared[c]+squared[a])/count-mean*mean):0;
+    const threshold=method==='mean'?mean-15:mean*(1+0.1*(Math.sqrt(variance)/128-1));
     const index=y*width+x,j=index*4,value=gray[index]<threshold?0:255;
     out[j]=out[j+1]=out[j+2]=value;out[j+3]=255;
   }

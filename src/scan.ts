@@ -26,9 +26,9 @@ export function mergeReads(base:ReadResult[],extra:ReadResult[]):ReadResult[] {
 export async function enhancedReads(image:Raster,reader:RasterReader):Promise<ReadResult[]> {
   return validReads(await reader(sharpen(image,2,3),scanOptions));
 }
-export async function shadowReads(image:Raster,reader:RasterReader,includeErrors=false):Promise<ReadResult[]> {
+export async function shadowReads(image:Raster,reader:RasterReader,includeErrors=false,method:'sauvola'|'mean'='sauvola'):Promise<ReadResult[]> {
   const limited=limitRaster(image);
-  const raw=await reader(correctIllumination(limited),{...scanOptions,binarizer:'FixedThreshold',returnErrors:includeErrors});
+  const raw=await reader(correctIllumination(limited,method),{...scanOptions,binarizer:'FixedThreshold',returnErrors:includeErrors});
   const codes=includeErrors?raw:validReads(raw);
   const scale=(p:{x:number;y:number})=>({x:p.x*image.width/limited.width,y:p.y*image.height/limited.height});
   return codes.map(code=>{const p=code.position;return {...code,position:{topLeft:scale(p.topLeft),topRight:scale(p.topRight),bottomRight:scale(p.bottomRight),bottomLeft:scale(p.bottomLeft)}};});
@@ -75,11 +75,13 @@ export async function scanRaster(image:Raster,reader:RasterReader,mode:ScanMode,
   const wantsShadow=mode==='shadow'||(mode==='auto'&&(cycle===undefined||cycle%2===0));
   if(wantsShadow){
     try{const shadow=await shadowReads(image,reader,true);base=mergeReads(base,validReads(shadow));candidates=[...candidates,...shadow];}catch{/* Keep unprocessed reads. */}
+    try{const shadow=await shadowReads(image,reader,true,'mean');base=mergeReads(base,validReads(shadow));candidates=[...candidates,...shadow];}catch{/* Keep other reads. */}
   }
   if(mode==='shadow')return base;
   if(mode==='auto'&&cycle!==undefined&&cycle%2===0)return base;
   if(!wantsShadow&&!candidates.some(code=>code.isValid===false)){
     try{const shadow=await shadowReads(image,reader,true);base=mergeReads(base,validReads(shadow));candidates=[...candidates,...shadow];}catch{/* Continue with original candidates. */}
+    try{const shadow=await shadowReads(image,reader,true,'mean');base=mergeReads(base,validReads(shadow));candidates=[...candidates,...shadow];}catch{/* Continue with other candidates. */}
   }
   try{return mergeReads(base,await curvedReads(image,reader,candidates,cycle===undefined?undefined:mode==='auto'?Math.floor(cycle/2):cycle));}catch{return base;}
 }

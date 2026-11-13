@@ -3,7 +3,7 @@ import {strict as assert} from 'node:assert';
 import {PNG} from 'pngjs';
 import {createStructuredAppend} from '@kubohiroya/qrcode-structured-append';
 import {prepareZXingModule,readBarcodes,type ReadResult} from 'zxing-wasm/reader';
-import {scanRaster,scanOptions,type RasterReader} from '../src/scan.ts';
+import {scanRaster,scanOptions,shadowReads,type RasterReader} from '../src/scan.ts';
 import {curvedPoint,curveVariants,type Curve} from '../src/curvature.ts';
 import type {Raster} from '../src/image-enhance.ts';
 import {contains} from '../src/geometry.ts';
@@ -65,6 +65,26 @@ Deno.test('partial shadow correction retains original reads and recovers difficu
     if(!before.some(code=>isExpected(code,bytes))&&after.some(code=>isExpected(code,bytes)))recovered++;
   }),{numRuns:20,seed:20261112});
   assert.ok(recovered>=5,`only ${recovered} shadow samples recovered`);
+});
+Deno.test('an alternative local threshold can recover low-contrast codes across a partial shadow',async()=>{
+  let recovered=0;
+  await fc.assert(fc.asyncProperty(
+    fc.uint8Array({minLength:30,maxLength:50}),fc.integer({min:195,max:210}),fc.integer({min:55,max:75}),
+    fc.integer({min:60,max:75}),fc.oneof(fc.integer({min:15,max:30}),fc.integer({min:65,max:85})),
+    async(bytes,light,contrast,factor,boundary)=>{
+      const image=generated(bytes);
+      for(let y=0;y<image.height;y++)for(let x=0;x<image.width;x++){
+        const i=(y*image.width+x)*4;
+        const value=(image.data[i]===0?light-contrast:light)*(x>image.width*boundary/100?factor/100:1);
+        image.data[i]=image.data[i+1]=image.data[i+2]=value;
+      }
+      const raw=await reader(image,scanOptions),sauvola=await shadowReads(image,reader),mean=await shadowReads(image,reader,false,'mean');
+      if(!raw.some(code=>isExpected(code,bytes))&&!sauvola.some(code=>isExpected(code,bytes))&&mean.some(code=>isExpected(code,bytes))){
+        recovered++;
+        assert.ok((await scanRaster(image,reader,'auto')).some(code=>isExpected(code,bytes)));
+      }
+    }),{numRuns:100,seed:123});
+  assert.ok(recovered>0,`no additional low-contrast QR recovered`);
 });
 Deno.test('curve transforms leave normalized center and valid coordinates stable',()=>{
   fc.assert(fc.property(fc.constantFrom(...curveVariants),fc.double({min:0,max:1,noNaN:true}),fc.double({min:0,max:1,noNaN:true}),(curve,x,y)=>{

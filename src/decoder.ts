@@ -47,6 +47,7 @@ export async function decode(image:ImageData|Blob,mode:ScanMode='auto',enhanceFr
     let candidates=scalePositions(raw,1/scaleX,1/scaleY);
     if(mode==='auto'||mode==='shadow'||!candidates.some(code=>code.isValid===false)){
       try{const shadow=await shadowReads(raster,rasterReader,true);base=mergeReads(base,scalePositions(validReads(shadow),scaleX,scaleY));candidates=[...candidates,...shadow];}catch{/* Continue with original candidates. */}
+      try{const shadow=await shadowReads(raster,rasterReader,true,'mean');base=mergeReads(base,scalePositions(validReads(shadow),scaleX,scaleY));candidates=[...candidates,...shadow];}catch{/* Continue with other candidates. */}
     }
     if(mode==='shadow')return base;
     const curved=scalePositions(await curvedReads(raster,rasterReader,candidates),scaleX,scaleY);

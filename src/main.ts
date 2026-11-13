@@ -15,6 +15,10 @@ import {icon} from './icons.ts';
 import {Observations,type Observation} from './observed.ts';
 import type {ScanMode} from './scan.ts';
 import {CameraRecovery} from './camera-recovery.ts';
+import {CameraRecording,createCameraRecorder,recordingFilename,type RecordingPhase} from './camera-recording.ts';
+
+const revision=document.querySelector<HTMLMetaElement>('meta[name="build-commit"]')?.content??'';
+const buildCommit=/^[0-9a-f]{40}$/.test(revision)?revision:'開発版';
 
 function App(){
   const [collection,setCollection]=createSignal(emptyCollection());
@@ -31,6 +35,26 @@ function App(){
   const [torchAvailable,setTorchAvailable]=createSignal(false);
   const [torchOn,setTorchOn]=createSignal(false);
   const [torchBusy,setTorchBusy]=createSignal(false);
+  const [recordingPhase,setRecordingPhase]=createSignal<RecordingPhase>('idle');
+  const [recordingSeconds,setRecordingSeconds]=createSignal(0);
+  const recordingSupported=typeof MediaRecorder!=='undefined';
+  let recordingTimer:ReturnType<typeof setInterval>|undefined;
+  const recording=new CameraRecording({
+    create:createCameraRecorder,
+    state:phase=>{
+      clearInterval(recordingTimer);setRecordingPhase(phase);
+      if(phase==='recording'){
+        const started=Date.now();setRecordingSeconds(0);
+        recordingTimer=setInterval(()=>setRecordingSeconds(Math.floor((Date.now()-started)/1000)),1000);
+      }
+    },
+    save:blob=>{
+      const name=recordingFilename(blob.type,buildCommit==='開発版'?'dev':buildCommit);
+      const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;link.click();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);setMessage('録画を保存しました。');
+    },
+    error:()=>setMessage('録画できませんでした。ブラウザーの対応状況や空き容量を確認してください。'),
+  });
   let video!:HTMLVideoElement,camera!:HTMLDivElement,fullDialog!:HTMLDialogElement;
   let stream:MediaStream|undefined;
   let supported:CameraSupported={};
@@ -46,6 +70,7 @@ function App(){
 
   function stop(){
     generation++;
+    recording.stop();
     const current=stream;stream=undefined;
     current?.getTracks().forEach(track=>track.stop());
     pointers.clear();observations.clear();
@@ -132,6 +157,10 @@ function App(){
     catch{setMessage('ライトを切り替えできませんでした。');}
     finally{setTorchBusy(false);}
   }
+  function toggleRecording(){
+    if(recordingPhase()==='recording')recording.stop();
+    else if(recordingPhase()==='idle'&&stream){setMessage('');recording.start(stream);}
+  }
   async function readImages(images:Iterable<Blob>){
     let seen=false,found=false,failed=false;
     for(const image of images){
@@ -202,7 +231,7 @@ function App(){
         const suites=collection().suites.filter(s=>s.parts[0].total===group.total&&s.parts[0].parity===group.parity);
         return h('div',{class:'group'},group.total>1?h('div',{class:'parts'},...group.slots.map((slot,i)=>h('span',{class:slot.length?'part done':'part','aria-label':`${i+1}番 ${slot.length?`${slot.length}種類読み込み済み`:'未読み込み'}`},String(i+1),slot.length>1?h('span',{class:'part-count','aria-hidden':'true'},String(slot.length)):null))):null,...suites.map(resultCard))();
       }):h('p',{class:'empty'},'QRコードを読ませてください')()),
-    h('footer','読み取りデータはこの端末内で処理されます。'),
+    h('footer',h('span','読み取りデータはこの端末内で処理されます。'),h('span',{class:'build-commit'},'コミット: ',h('code',buildCommit))),
     h('div',{class:()=>`camera-stage ${active()?'':'hidden'}`},
       h('div',{class:'camera',ref:(el:HTMLDivElement)=>{camera=el;},onPointerDown:(e:PointerEvent)=>{e.preventDefault();camera.setPointerCapture(e.pointerId);pointer(e);void focusPointer(e);},onPointerMove:(e:PointerEvent)=>{if(pointers.has(e.pointerId))pointer(e);},onPointerUp:(e:PointerEvent)=>pointers.remove(e.pointerId),onPointerCancel:(e:PointerEvent)=>pointers.remove(e.pointerId),onLostPointerCapture:(e:PointerEvent)=>pointers.remove(e.pointerId)},
         h('video',{ref:(el:HTMLVideoElement)=>{video=el;},autoplay:true,muted:true,playsinline:true}),
@@ -211,6 +240,8 @@ function App(){
       ()=>torchAvailable()?h('button',{type:'button',class:()=>`icon-button camera-torch ${torchOn()?'on':''}`,'aria-label':()=>torchOn()?'ライトを消す':'ライトを点ける','aria-pressed':()=>String(torchOn()),title:'ライト',disabled:torchBusy,onClick:toggleTorch},icon('torch'))():null,
       modeSelect('scan-mode camera-mode'),
       h('button',{type:'button',class:'icon-button camera-close','aria-label':'カメラを停止',title:'カメラを停止',onClick:stop},icon('close')),
+      h('button',{type:'button',class:()=>`icon-button camera-record ${recordingPhase()==='recording'?'recording':''}`,'aria-label':()=>recordingPhase()==='recording'?'録画を停止して保存':'録画を開始','aria-pressed':()=>String(recordingPhase()==='recording'),title:recordingSupported?'カメラ映像を録画して保存':'このブラウザーは録画に対応していません',disabled:()=>!recordingSupported||recordingPhase()==='stopping',onClick:toggleRecording},()=>recordingPhase()==='recording'?icon('stop')():icon('record')()),
+      ()=>recordingPhase()!=='idle'?h('span',{class:'recording-status',role:'status'},()=>recordingPhase()==='stopping'?'録画を保存中…':`録画中 ${Math.floor(recordingSeconds()/60)}:${String(recordingSeconds()%60).padStart(2,'0')}`)():null,
       h('p',{class:'camera-error',role:'status'},message)),
     ()=>active()&&observed().length?h('aside',{class:()=>`observed ${preview()?'raised':''}`,'aria-label':'認識中の QR コード'},...observed().map(item=>h('div',{class:'observed-item'},item.part?h('span',{class:'observed-part'},item.part):null,item.url?h('a',{href:item.url,target:'_blank',rel:'noopener noreferrer',class:'observed-text',title:item.url},item.text):h('span',{class:'observed-text'},item.text||'QR'))))():null,
     ()=>active()&&preview()?h('aside',{class:'preview',role:'status',onPointerDown:(e:PointerEvent)=>{previewStartX=e.clientX;previewSwiped=false;(e.target as Element).closest('button')?.setPointerCapture(e.pointerId);},onPointerUp:(e:PointerEvent)=>{if(Math.abs(e.clientX-previewStartX)>45){previewSwiped=true;dismiss();}}},

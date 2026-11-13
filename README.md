@@ -18,6 +18,8 @@ deno run --allow-net --allow-read jsr:@std/http/file-server dist
 
 `src/index.html` をエントリーポイントに `deno bundle` で `dist/` に出力します。カメラは HTTPS または localhost で利用できます。GitHub Actions は main への push 後にビルドとテストを行い、GitHub Pages に公開します。
 
+ページのフッターにビルド元のコミットハッシュを表示します。カメラ画面の録画ボタンでは、音声なしの元映像をデバッグ用に保存できます。録画停止・カメラ終了時にWebMまたはMP4をダウンロードし、ファイル名にコミットの短縮ハッシュと端末の日時を付けます。録画データは端末内で処理します。
+
 曲面と照明むらの回帰テストは `deno test --allow-read tests/curved_paper_test.ts` で実行できます。QR を3D円筒面に投影して生成し、開発用と別シードの評価用それぞれで、元バイト列・分割情報が完全一致する読み取り率90%以上を要求します。実写真を確認するときはリポジトリ外に置き、`verify-png` にパスを渡してください。実写真はテストデータに含めません。
 
 QR デコードに [zxing-wasm](https://github.com/Sec-ant/zxing-wasm) を使用しています。同梱ライセンスは `vendor/zxing-wasm-LICENSE.txt` です。

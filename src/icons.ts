@@ -1,8 +1,9 @@
 import h from 'solid-js/h';
-type Icon = 'camera'|'stop'|'image'|'paste'|'reset'|'copy'|'check'|'share'|'delete'|'download'|'expand'|'collapse'|'close'|'torch';
+type Icon = 'camera'|'stop'|'record'|'image'|'paste'|'reset'|'copy'|'check'|'share'|'delete'|'download'|'expand'|'collapse'|'close'|'torch';
 const paths: Record<Icon,string> = {
   camera:'M4 7h3l1.5-2h7L17 7h3v12H4z M15 13a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',
   stop:'M7 7h10v10H7z',
+  record:'M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0z',
   image:'M4 2h11l5 5v15H4z M15 2v5h5 M7 10h3v3H7z M14 10h3v3h-3z M7 16h3v3H7z M14 16h1 M17 16v1 M14 19h3',
   paste:'M9 4H5v18h14V4h-4 M9 2h6v4H9z M7 9h3v3H7z M14 9h3v3h-3z M7 16h3v3H7z M14 16h1 M17 16v1 M14 19h3',
   reset:'M12 3v9 M6.6 5.7a8 8 0 1 0 10.8 0',

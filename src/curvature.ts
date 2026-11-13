@@ -1,6 +1,7 @@
 import type {Raster} from './image-enhance.ts';
 import type {ReadResult} from 'zxing-wasm/reader';
 export type CurveAxis='horizontal'|'vertical';
+export type QrCandidate=Pick<ReadResult,'position'|'version'>;
 export type Curve={axis:CurveAxis;strength:number;angle?:number};
 export const curveVariants:Curve[]=(['horizontal','vertical'] as const).flatMap(axis=>[0.3,-0.3,0.45,-0.45].map(strength=>({axis,strength})));
 /** Map a flattened normalized position to its position in the camera image. */
@@ -40,7 +41,7 @@ export function mapCurvePositions(codes:ReadResult[],curve:Curve,flattened:Raste
 }
 
 export type Region={x:number;y:number;width:number;height:number;angle?:number};
-export function candidateRegions(image:Raster,codes:ReadResult[]):Region[]{
+export function candidateRegions(image:Raster,codes:Pick<ReadResult,'position'>[]):Region[]{
   const result:Region[]=[];
   for(const code of codes){
     const p=Object.values(code.position),xs=p.map(point=>point.x),ys=p.map(point=>point.y);

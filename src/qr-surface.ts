@@ -2,87 +2,19 @@ import type { ReadResult } from "zxing-wasm/reader";
 import type { Raster } from "./image-enhance.ts";
 import { correctIllumination } from "./illumination.ts";
 import type { QrCandidate } from "./curvature.ts";
+import { qrFunctionMarks } from "./qr-patterns.ts";
+export { qrFunctionMarks } from "./qr-patterns.ts";
+import { alignmentMesh, finderSurface, solve } from "./qr-landmarks.ts";
 
 type Point = { x: number; y: number };
-type Mark = { u: number; v: number; dark: boolean };
-type Surface = {
+export type Surface = {
   size: number;
   score: number;
   parameters: number[];
+  fromFinders?: boolean;
+  hypothesis?: number;
   map: (u: number, v: number) => Point;
 };
-
-function solve(a: number[][], b: number[]): number[] {
-  const n = b.length, m = a.map((row, i) => [...row, b[i]]);
-  for (let i = 0; i < n; i++) {
-    let pivot = i;
-    for (let j = i + 1; j < n; j++) {
-      if (Math.abs(m[j][i]) > Math.abs(m[pivot][i])) pivot = j;
-    }
-    [m[i], m[pivot]] = [m[pivot], m[i]];
-    const d = m[i][i];
-    if (Math.abs(d) < 1e-12) return new Array(n).fill(0);
-    for (let k = i; k <= n; k++) m[i][k] /= d;
-    for (let j = 0; j < n; j++) {
-      if (j !== i) {
-        const v = m[j][i];
-        for (let k = i; k <= n; k++) m[j][k] -= v * m[i][k];
-      }
-    }
-  }
-  return m.map((row) => row[n]);
-}
-
-/** Only public QR function patterns are used to estimate the sampling lattice. */
-export function qrFunctionMarks(size: number): Mark[] {
-  const cells = new Map<number, boolean>();
-  const put = (x: number, y: number, dark: boolean) => {
-    if (x >= 0 && y >= 0 && x < size && y < size) cells.set(y * size + x, dark);
-  };
-  for (const [left, top] of [[0, 0], [size - 7, 0], [0, size - 7]]) {
-    for (let y = -1; y <= 7; y++) {
-      for (let x = -1; x <= 7; x++) {
-        const d = Math.max(Math.abs(x - 3), Math.abs(y - 3));
-        put(left + x, top + y, d === 3 || d <= 1);
-      }
-    }
-  }
-  for (let i = 8; i < size - 8; i++) {
-    put(i, 6, i % 2 === 0);
-    put(6, i, i % 2 === 0);
-  }
-  const version = (size - 17) / 4;
-  if (version > 1) {
-    const count = Math.floor(version / 7) + 2,
-      step = version === 32
-        ? 26
-        : Math.floor((version * 4 + count * 2 + 1) / (count * 2 - 2)) * 2;
-    const centers = [6];
-    for (let i = count - 2; i >= 0; i--) centers.push(size - 7 - i * step);
-    for (const y of centers) {
-      for (const x of centers) {
-        if (
-          (x === 6 && y === 6) || (x === 6 && y === size - 7) ||
-          (x === size - 7 && y === 6)
-        ) continue;
-        for (let dy = -2; dy <= 2; dy++) {
-          for (let dx = -2; dx <= 2; dx++) {
-            put(x + dx, y + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
-          }
-        }
-      }
-    }
-  }
-  return [...cells].flatMap(([index, dark]) =>
-    [[0, 0], [-.28, -.28], [.28, .28], [-.28, .28], [.28, -.28]].map((
-      [dx, dy],
-    ) => ({
-      u: ((index % size) + .5 + dx) / size * 2 - 1,
-      v: (Math.floor(index / size) + .5 + dy) / size * 2 - 1,
-      dark,
-    }))
-  );
-}
 
 function mapper(
   position: ReadResult["position"],
@@ -120,8 +52,8 @@ function mapper(
 export function* fitQrSurfaces(
   image: Raster,
   candidate: QrCandidate,
-  cycle?: number,
-  initial?: {size:number;parameters:number[]},
+  cycle?: number | readonly number[],
+  initial?: { size: number; parameters: number[] },
 ): Generator<Surface> {
   const binary = correctIllumination(image, "mean"), { width, height } = image;
   const smooth = new Float32Array(width * height);
@@ -136,16 +68,55 @@ export function* fitQrSurfaces(
       smooth[y * width + x] = sum / (255 * 9);
     }
   }
-  const value = (x: number, y: number) => {
+  const interpolate = (pixels: Float32Array, x: number, y: number) => {
     if (x < 0 || y < 0 || x >= width - 1 || y >= height - 1) return 1;
     const ix = Math.floor(x),
       iy = Math.floor(y),
       fx = x - ix,
       fy = y - iy,
       i = iy * width + ix;
-    return smooth[i] * (1 - fx) * (1 - fy) + smooth[i + 1] * fx * (1 - fy) +
-      smooth[i + width] * (1 - fx) * fy + smooth[i + width + 1] * fx * fy;
+    return pixels[i] * (1 - fx) * (1 - fy) + pixels[i + 1] * fx * (1 - fy) +
+      pixels[i + width] * (1 - fx) * fy + pixels[i + width + 1] * fx * fy;
   };
+  const sizeEstimate = 17 + 4 * (Number(candidate.version) || 5);
+  const position = candidate.position;
+  const corners = [
+    position.topLeft,
+    position.topRight,
+    position.bottomRight,
+    position.bottomLeft,
+  ];
+  const pitch = corners.reduce(
+    (s, p, i) =>
+      s +
+      Math.hypot(p.x - corners[(i + 1) % 4].x, p.y - corners[(i + 1) % 4].y),
+    0,
+  ) / (4 * sizeEstimate);
+  const radius = Math.max(2, Math.round(pitch * .55));
+  const integral = new Float64Array((width + 1) * (height + 1));
+  for (let y = 0; y < height; y++) {
+    let sum = 0;
+    for (let x = 0; x < width; x++) {
+      sum += binary.data[(y * width + x) * 4] / 255;
+      integral[(y + 1) * (width + 1) + x + 1] =
+        integral[y * (width + 1) + x + 1] + sum;
+    }
+  }
+  const coarse = new Float32Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const l = Math.max(0, x - radius),
+        r = Math.min(width, x + radius + 1),
+        t = Math.max(0, y - radius),
+        b = Math.min(height, y + radius + 1),
+        stride = width + 1;
+      coarse[y * width + x] =
+        (integral[b * stride + r] - integral[t * stride + r] -
+          integral[b * stride + l] + integral[t * stride + l]) /
+        ((r - l) * (b - t));
+    }
+  }
+  let value = (x: number, y: number) => interpolate(coarse, x, y);
   const estimated = Number(candidate.version),
     versions = Number.isInteger(estimated) && estimated >= 1 && estimated <= 40
       ? [estimated, estimated - 1, estimated + 1, estimated - 2, estimated + 2]
@@ -154,12 +125,15 @@ export function* fitQrSurfaces(
   let job = 0;
   for (const version of versions) {
     for (const start of [0, 1, 2, 3, 4]) {
+      const hypothesis = job++;
       if (
-        cycle !== undefined && job++ !== cycle % (versions.length * 5)
+        cycle !== undefined && !(typeof cycle === "number" ? [cycle] : cycle)
+          .some((c) => hypothesis === c % (versions.length * 5))
       ) continue;
       const size = 17 + 4 * version,
         template = qrFunctionMarks(size),
         parameters = new Array<number>(16).fill(0);
+      value = (x, y) => interpolate(coarse, x, y);
       if (start) {
         // Two axis-constrained families, with either contraction sign, supplement
         // the unconstrained fit. These are starting points, not decoded templates.
@@ -172,7 +146,29 @@ export function* fitQrSurfaces(
           parameters[3] =
             (1 - 7 / (17 + 4 * estimated)) / (1 - 7 / size) - 1;
       }
-      if(initial?.size===size)parameters.splice(0,16,...initial.parameters);
+      if (initial?.size === size) {
+        parameters.splice(0, 16, ...initial.parameters);
+      }
+      if (start === 0 && version >= 7 && !initial) {
+        const base = {
+            size,
+            parameters: parameters.slice(),
+            score: 0,
+            hypothesis,
+            map: mapper(candidate.position, parameters, size),
+          },
+          finder = finderSurface(base, (x, y) => interpolate(smooth, x, y));
+        if (finder) {
+          const mesh = alignmentMesh(
+            finder,
+            (x, y) => interpolate(smooth, x, y),
+          );
+          if (mesh || finder.score <= .14) {
+            yield mesh && mesh.score < finder.score ? mesh : finder;
+            if (cycle !== undefined) continue;
+          }
+        }
+      }
       const finders = template.filter((m) => {
         const x = (m.u + 1) * size / 2, y = (m.v + 1) * size / 2;
         return (x < 8 && y < 8) || (x > size - 8 && y < 8) ||
@@ -197,6 +193,11 @@ export function* fitQrSurfaces(
         d = candidate.position.bottomLeft;
       for (let pass = 0; pass < 100; pass++) {
         if (pass === 25) {
+          value = (x, y) => interpolate(smooth, x, y);
+          score = evaluate();
+          damping = 1;
+        }
+        if (pass === 45) {
           // Establish the finder pose before introducing the periodic timing line.
           if (score > .16) break;
           active = template;
@@ -294,6 +295,7 @@ export function* fitQrSurfaces(
           damping = Math.max(.001, damping * .5);
           if (max < .0001) {
             if (pass < 25) pass = 24;
+            else if (pass < 45) pass = 44;
             else break;
           }
         } else {
@@ -301,6 +303,7 @@ export function* fitQrSurfaces(
           damping *= 5;
           if (damping > 1e6) {
             if (pass < 25) pass = 24;
+            else if (pass < 45) pass = 44;
             else break;
           }
         }
@@ -320,7 +323,12 @@ export function* fitQrSurfaces(
             determinant * orientation > 0;
         }
       }
-      if (sane) yield { size, score, map, parameters };
+      if (sane) {
+        const surface = { size, score, map, parameters, hypothesis };
+        const mesh = alignmentMesh(surface, value);
+        if (mesh) yield mesh;
+        if (!mesh || cycle === undefined) yield surface;
+      }
     }
   }
 }

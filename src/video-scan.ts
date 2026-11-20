@@ -21,6 +21,7 @@ import {
 
 type Pending = {
   candidate: QrCandidate;
+  source: "native" | "finder";
   trial: number;
   winner?: number;
   seen: number;
@@ -87,6 +88,7 @@ export class VideoScanner {
     const frame = this.frame++;
     const raw = await reader(image, locatingOptions);
     let results = validReads(raw), candidates = raw;
+    let independent: QrCandidate[] = [];
     if (mode === "standard") return results;
     // Re-read the current pixels around recent detections on every frame.
     for (const region of candidateRegions(image, this.tracked).slice(0, 4)) {
@@ -162,42 +164,46 @@ export class VideoScanner {
       const mapped = translated(found, region, tile);
       results = mergeReads(results, validReads(mapped));
       candidates = [...candidates, ...mapped];
-      if (!candidates.some((c) => /^\d+$/.test(c.version))) {
-        candidates = [
-          ...candidates,
-          ...locateQrCandidates(image).map(
-            (c) => ({ ...c, isValid: false } as ReadResult),
-          ),
-        ];
-      }
+      // A clipped neighbouring symbol can produce a numeric but unusable
+      // native candidate. It must not suppress independent finder detection.
+      independent = locateQrCandidates(image);
     }
     const updated = new Set<Pending>();
     for (
-      const candidate of candidates.filter((c) =>
-        c.isValid === false && /^\d+$/.test(c.version)
-      )
+      const { candidate, source } of [
+        ...independent.map((candidate) => ({
+          candidate,
+          source: "finder" as const,
+        })),
+        ...candidates.filter((c) =>
+          c.isValid === false && /^\d+$/.test(c.version)
+        ).map((candidate) => ({ candidate, source: "native" as const })),
+      ]
     ) {
       if (results.some((c) => sameLocation(c, candidate))) continue;
       const old = this.pending.find((p) =>
-        sameLocation(p.candidate, candidate)
+        p.source === source && sameLocation(p.candidate, candidate)
       );
       if (old) {
         if (!old.seed && !updated.has(old)) old.candidate = candidate;
         old.seen = frame;
         updated.add(old);
       } else {
-        const entry = { candidate, trial: 0, seen: frame };
+        const entry = { candidate, source, trial: 0, seen: frame };
         this.pending.push(entry);
         updated.add(entry);
       }
     }
-    this.pending = this.pending.filter((p) => frame - p.seen <= 12).sort((
+    const eligible = this.pending.filter((p) => frame - p.seen <= 12).sort((
       a,
       b,
     ) =>
       (b.winner !== undefined ? 1 : 0) - (a.winner !== undefined ? 1 : 0) ||
       b.seen - a.seen
-    ).slice(0, 4);
+    );
+    // Preserve both sources: their approximations fail in different ways.
+    this.pending = eligible.filter((p) => p.source === "finder").slice(0, 2)
+      .concat(eligible.filter((p) => p.source === "native").slice(0, 2));
     for (const entry of this.pending) {
       if (entry.seed && entry.center) {
         const read = results.find((c) => sameLocation(c, entry.candidate));
@@ -252,7 +258,15 @@ export class VideoScanner {
               bottomLeft: point(p.bottomLeft),
             },
           };
-        for (const surface of fitQrSurfaces(source, local, trial, job.seed)) {
+        // Acquisition examines both bend axes for one version in this frame.
+        // Spreading every axis over separate frames loses moving camera poses.
+        // Once decoded, retain just the successful hypothesis for tracking.
+        const hypotheses = job.winner === undefined
+          ? [0, 1, 2, 3, 4].map((start) => trial * 5 + start)
+          : trial;
+        for (
+          const surface of fitQrSurfaces(source, local, hypotheses, job.seed)
+        ) {
           if (surface.score > .14) continue;
           const { raster, point: map } = sampleQrSurface(source, surface);
           let codes = validReads(
@@ -285,8 +299,8 @@ export class VideoScanner {
           if (codes.length) {
             const mapped = translated(codes, region, source);
             results = mergeReads(results, mapped);
-            job.winner = trial;
-            job.seed = {
+            job.winner = surface.hypothesis;
+            job.seed = surface.fromFinders ? undefined : {
               size: surface.size,
               parameters: surface.parameters.slice(),
             };
@@ -316,6 +330,7 @@ export class VideoScanner {
               };
             }
             job.center = center;
+            break;
           }
         }
         if (!recovered) {

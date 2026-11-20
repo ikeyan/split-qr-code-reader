@@ -6,14 +6,23 @@ import type { Raster } from "../src/image-enhance.ts";
  * A textured cylinder is rotated in 3D and perspective projected, then rasterized
  * as triangles with perspective-correct texture coordinates at 2x resolution.
  */
-export function curvedPaper(seed: number, index: number, options: {angle?:number;roll?:number} = {}) {
+export function curvedPaper(seed: number, index: number, options: {
+  angle?: number;
+  roll?: number;
+  yaw?: number;
+  pitch?: number;
+  bendOffset?: number;
+  version?: number;
+  resolution?: number;
+} = {}) {
   let state = seed >>> 0;
   const random = () => {
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
     return state / 4294967296;
   };
   const range = (a: number, b: number) => a + (b - a) * random();
-  const version = [3, 5, 7, 9][index % 4], level = index % 3 === 0 ? "L" : "M";
+  const version = options.version ?? [3, 5, 7, 9][index % 4],
+    level = index % 3 === 0 ? "L" : "M";
   const text = `https://qr.test/${seed}/` +
     Array.from(
       { length: version * 4 },
@@ -33,31 +42,45 @@ export function curvedPaper(seed: number, index: number, options: {angle?:number
   const dark = (x: number, y: number) =>
     symbol ? symbol.isDark(x, y) : normal!.get(x, y) === 1;
   const expected = symbol?.bytes ?? new TextEncoder().encode(text);
-  const width = 600, height = 700, ss = 2, w = width * ss, h = height * ss;
+  const resolution = options.resolution ?? 1;
+  const width = 600 * resolution,
+    height = 700 * resolution,
+    ss = 2,
+    w = width * ss,
+    h = height * ss;
   const pixels = new Float32Array(w * h);
   pixels.fill(225);
   // Receipt text-like clutter outside the code, and a dark surrounding surface.
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      if (x < 70 * ss || x > 545 * ss) pixels[y * w + x] = 45;
-      else if (
-        y < 180 * ss && y % (16 * ss) < 7 * ss && x % (13 * ss) < 9 * ss
+      if (x < 70 * ss * resolution || x > 545 * ss * resolution) {
+        pixels[y * w + x] = 45;
+      } else if (
+        y < 180 * ss * resolution &&
+        y % (16 * ss * resolution) < 7 * ss * resolution &&
+        x % (13 * ss * resolution) < 9 * ss * resolution
       ) pixels[y * w + x] = 90;
     }
   }
-  const angle = options.angle ?? range(.65, 1.2) * (Math.floor(index / 16) % 2 === 0 ? 1 : -1),
+  const angle = options.angle ??
+      range(.65, 1.2) * (Math.floor(index / 16) % 2 === 0 ? 1 : -1),
     vertical = Math.floor(index / 8) % 2 === 0;
-  const yaw = range(-.22, .22),
-    pitch = range(-.22, .22),
+  const yaw = options.yaw ?? range(-.22, .22),
+    pitch = options.pitch ?? range(-.22, .22),
     roll = options.roll ?? range(-.35, .35),
     distance = range(3.5, 5);
-  const scale = range(145, 185) * ss,
-    cx = range(285, 320) * ss,
-    cy = range(405, 440) * ss;
+  const scale = range(145, 185) * ss * resolution,
+    cx = range(285, 320) * ss * resolution,
+    cy = range(405, 440) * ss * resolution;
   const project = (u: number, v: number) => {
     const t = vertical ? v : u, cross = vertical ? u : v;
-    const bent = angle ? Math.sin(angle * t) / angle : t,
-      z = angle ? (1 - Math.cos(angle * t)) / angle : 0;
+    const offset = options.bendOffset ?? 0;
+    const bent = angle
+        ? (Math.sin(angle * (t + offset)) - Math.sin(angle * offset)) / angle
+        : t,
+      z = angle
+        ? (Math.cos(angle * offset) - Math.cos(angle * (t + offset))) / angle
+        : 0;
     const x = vertical ? cross : bent, y = vertical ? bent : cross;
     const xx = Math.cos(yaw) * x + Math.sin(yaw) * z,
       zz = -Math.sin(yaw) * x + Math.cos(yaw) * z;

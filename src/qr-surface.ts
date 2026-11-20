@@ -337,6 +337,7 @@ export function* fitQrSurfaces(
 export function sampleQrSurface(
   image: Raster,
   surface: Surface,
+  oversample = false,
 ): { raster: Raster; point: (p: Point) => Point } {
   const scale = 6,
     margin = 4,
@@ -360,15 +361,26 @@ export function sampleQrSurface(
         continue;
       }
       const from = (sy * image.width + sx) * 4;
+      const color=Array.from(image.data.subarray(from,from+4));
+      if(oversample){
+        color.fill(0);let count=0;
+        for(const dy of [-.2,0,.2])for(const dx of [-.2,0,.2]){
+          const p=surface.map((x+.5+dx)/surface.size*2-1,(y+.5+dy)/surface.size*2-1),
+            xx=Math.floor(p.x),yy=Math.floor(p.y);
+          if(xx<0||yy<0||xx>=image.width||yy>=image.height)continue;
+          const i=(yy*image.width+xx)*4;for(let k=0;k<4;k++)color[k]+=image.data[i+k];count++;
+        }
+        if(count)for(let k=0;k<4;k++)color[k]/=count;
+      }
       for (let dy = 0; dy < scale; dy++) {
         for (let dx = 0; dx < scale; dx++) {
           const to =
             (((y + margin) * scale + dy) * width + (x + margin) * scale + dx) *
             4;
-          data[to] = image.data[from];
-          data[to + 1] = image.data[from + 1];
-          data[to + 2] = image.data[from + 2];
-          data[to + 3] = image.data[from + 3];
+          data[to] = color[0];
+          data[to + 1] = color[1];
+          data[to + 2] = color[2];
+          data[to + 3] = color[3];
         }
       }
     }

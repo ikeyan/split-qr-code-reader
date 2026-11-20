@@ -4,11 +4,18 @@ import { correctIllumination, limitRaster } from "./illumination.ts";
 import { contains } from "./geometry.ts";
 import type { QrCandidate } from "./curvature.ts";
 
-type Finder = { x: number; y: number; pitch: number; count: number };
+type Finder = {
+  x: number;
+  y: number;
+  pitch: number;
+  count: number;
+  pitchX?: number;
+  pitchY?: number;
+};
 
 /** Nested black/white/black components distinguish full finder rings from
  * accidental 1:1:3:1:1 runs in dense data. No straight QR edge is required. */
-function nestedFinders(image: Raster): Finder[] {
+export function nestedFinders(image: Raster, loose = false): Finder[] {
   const { width, height, data } = image, length = width * height;
   const labels = new Uint32Array(length), queue = new Uint32Array(length);
   type Component = {
@@ -91,6 +98,22 @@ function nestedFinders(image: Raster): Finder[] {
       }
     }
   }
+  if (loose) {
+    return components.filter((c) =>
+      c.dark && c.area >= 9 && c.area < length * .015 &&
+      c.area / ((c.r - c.l) * (c.b - c.t)) > .45 &&
+      Math.max(c.r - c.l, c.b - c.t) < Math.min(width, height) * .2
+    )
+      .map((c) => ({
+        x: c.x,
+        y: c.y,
+        pitch: Math.max(c.r - c.l, c.b - c.t) / 3,
+        pitchX: (c.r - c.l) / 3,
+        pitchY: (c.b - c.t) / 3,
+        count: c.area,
+      }))
+      .sort((a, b) => b.count - a.count).slice(0, 256);
+  }
   const contains = (a: Component, b: Component) =>
     a.l <= b.l && a.r >= b.r && a.t <= b.t && a.b >= b.b;
   const result: Finder[] = [];
@@ -128,6 +151,7 @@ function ratio(r: number[]): boolean {
 export function locateQrCandidates(
   original: Raster,
   known: ReadResult[] = [],
+  wide = false,
 ): QrCandidate[] {
   const image = correctIllumination(limitRaster(original), "mean"),
     { width, height, data } = image;
@@ -237,7 +261,8 @@ export function locateQrCandidates(
           pitch = (a.pitch + b.pitch + c.pitch) / 3;
         const cosine = Math.abs((ux * vx + uy * vy) / (u * v));
         if (
-          cosine > .35 || u / v < .5 || u / v > 2 ||
+          cosine > (wide ? .8 : .35) || u / v < (wide ? .25 : .5) ||
+          u / v > (wide ? 4 : 2) ||
           Math.min(u, v) < pitch * 13 ||
           Math.max(a.pitch, b.pitch, c.pitch) >
             Math.min(a.pitch, b.pitch, c.pitch) * 2
@@ -276,7 +301,7 @@ export function locateQrCandidates(
           20
       )
     ) codes.push(code);
-    if (codes.length >= 6) break;
+    if (codes.length >= (wide ? 24 : 6)) break;
   }
   return codes;
 }

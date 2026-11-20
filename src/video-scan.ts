@@ -75,6 +75,7 @@ export class VideoScanner {
     image: Raster,
     reader: RasterReader,
     mode: ScanMode = "auto",
+    priorRaw?: ReadResult[],
   ): Promise<ReadResult[]> {
     const dimensions = `${image.width}x${image.height}`;
     if (mode !== this.mode || dimensions !== this.dimensions) {
@@ -86,7 +87,7 @@ export class VideoScanner {
       this.lastRead = -1;
     }
     const frame = this.frame++;
-    const raw = await reader(image, locatingOptions);
+    const raw = priorRaw ?? await reader(image, locatingOptions);
     let results = validReads(raw), candidates = raw;
     let independent: QrCandidate[] = [];
     if (mode === "standard") return results;

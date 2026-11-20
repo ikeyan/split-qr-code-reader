@@ -6,3 +6,5 @@
 .observed.raised{bottom:calc(max(16px,env(safe-area-inset-bottom)) + 84px)}
 .build-commit{display:block;margin-top:6px;overflow-wrap:anywhere}.build-commit code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .camera-record{position:absolute;right:max(14px,env(safe-area-inset-right));top:calc(max(14px,env(safe-area-inset-top)) + 54px);background:#162c20e6;color:#ffb3ad}.camera-record:hover:not(:disabled){background:#294b36}.camera-record.recording{background:#ae332e;color:#fff}.camera-record.recording:hover:not(:disabled){background:#922925}.camera-record:not(.recording) svg path{fill:currentColor;stroke:none}.recording-status{position:absolute;top:calc(max(14px,env(safe-area-inset-top)) + 66px);right:calc(max(14px,env(safe-area-inset-right)) + 54px);padding:5px 9px;border-radius:6px;background:#162c20e6;color:#fff;font-size:12px;pointer-events:none}
+
+.camera-surface{position:absolute;top:calc(max(18px,env(safe-area-inset-top)) + 88px);left:50%;transform:translateX(-50%);background:#162c20d9;border-color:#ffffff44;color:white;max-width:calc(100% - 140px)}

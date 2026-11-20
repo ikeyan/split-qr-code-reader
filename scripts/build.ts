@@ -15,6 +15,7 @@ try {
   await Deno.stderr.write(worker.stderr);
   if(!worker.success)Deno.exit(worker.code);
   await Deno.copyFile('src/style.css', 'dist/style.css');
+  await Deno.copyFile('vendor/qr-networks.json', 'dist/qr-networks.json');
   await Deno.copyFile('vendor/heic-to.js', 'dist/heic-to.js');
   const html=await Deno.readTextFile('dist/index.html');
   await Deno.writeTextFile('dist/index.html',html.replace('__BUILD_COMMIT__',commit).replace('<script src=', '<script defer src="./heic-to.js"></script><script src='));

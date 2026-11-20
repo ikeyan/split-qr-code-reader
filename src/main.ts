@@ -17,6 +17,8 @@ import type {ScanMode} from './scan.ts';
 import {CameraRecovery} from './camera-recovery.ts';
 import {CameraRecording,createCameraRecorder,recordingFilename,type RecordingPhase} from './camera-recording.ts';
 import {CameraDecoder} from './camera-decoder.ts';
+import {neuralStatus} from './neural-service.ts';
+import type {SurfaceMethod} from './neural-scan.ts';
 
 const revision=document.querySelector<HTMLMetaElement>('meta[name="build-commit"]')?.content??'';
 const buildCommit=/^[0-9a-f]{40}$/.test(revision)?revision:'開発版';
@@ -28,6 +30,14 @@ function App(){
   const [detected,setDetected]=createSignal<ReadResult[]>([]);
   const [observed,setObserved]=createSignal<Observation[]>([]);
   const [scanMode,setScanMode]=createSignal<ScanMode>('auto');
+  const [surfaceMethod,setSurfaceMethod]=createSignal<SurfaceMethod>('neural');
+  const [hasGpu,setHasGpu]=createSignal(false);
+  let methodChosen=false;
+  let mainGpu=false,workerGpu=typeof Worker==='undefined',mainGpuReady=false,workerGpuReady=typeof Worker==='undefined';
+  const [gpuKnown,setGpuKnown]=createSignal(false);
+  const gpuStatus=(gpu:boolean)=>{setGpuKnown(mainGpuReady&&workerGpuReady);setHasGpu(gpu);if(!gpu)setSurfaceMethod('classical');else if(!methodChosen)setSurfaceMethod('neural');};
+  const unsubscribeGpu=neuralStatus(gpu=>{if(gpu===undefined)return;mainGpuReady=true;mainGpu=gpu;gpuStatus(mainGpu&&workerGpu);});
+  onCleanup(unsubscribeGpu);
   const [viewSize,setViewSize]=createSignal({width:1,height:1});
   const [previews,setPreviews]=createSignal<string[]>([]);
   const [dragging,setDragging]=createSignal(false);
@@ -66,7 +76,7 @@ function App(){
   let previewSwiped=false;
   const pointers=new Pointers();
   const observations=new Observations();
-  const cameraDecoder=new CameraDecoder();
+  const cameraDecoder=new CameraDecoder(gpu=>{workerGpuReady=true;workerGpu=gpu;gpuStatus(mainGpu&&workerGpu);});
   const canvas=document.createElement('canvas');
   const context=canvas.getContext('2d',{willReadFrequently:true})!;
 
@@ -126,7 +136,7 @@ function App(){
         try{
           const width=video.videoWidth,height=video.videoHeight;
           if(width&&height){canvas.width=width;canvas.height=height;context.drawImage(video,0,0,width,height);
-            const codes=await cameraDecoder.scan(context.getImageData(0,0,width,height),scanMode());
+            const codes=await cameraDecoder.scan(context.getImageData(0,0,width,height),scanMode(),surfaceMethod(),hasGpu());
             if(current!==generation)return;
             setViewSize({width:camera.clientWidth,height:camera.clientHeight});setDetected(codes);
             const next=observations.update(codes,Date.now());
@@ -167,7 +177,7 @@ function App(){
   async function readImages(images:Iterable<Blob>){
     let seen=false,found=false,failed=false;
     for(const image of images){
-      try{const prepared=await prepareImage(image);if(!prepared)continue;seen=true;const codes=await decode(prepared,scanMode());if(codes.length)found=true;for(const code of codes)add(code);}
+      try{const prepared=await prepareImage(image);if(!prepared)continue;seen=true;const codes=await decode(prepared,scanMode(),true,undefined,surfaceMethod(),hasGpu());if(codes.length)found=true;for(const code of codes)add(code);}
       catch{seen=true;failed=true;}
     }
     if(!seen)setMessage('画像が見つかりませんでした。');
@@ -208,6 +218,7 @@ function App(){
   function openFull(id:string){setExpanded(id);fullDialog.showModal();}
   function expandedSuite(){return collection().suites.find(s=>s.id===expanded());}
   function modeSelect(className:string){return h('select',{class:className,'aria-label':'読み取り方法',value:scanMode,onChange:(event:Event)=>setScanMode((event.currentTarget as HTMLSelectElement).value as ScanMode)},h('option',{value:'auto'},'自動'),h('option',{value:'standard'},'標準'),h('option',{value:'sharpen'},'輪郭補正'),h('option',{value:'curve'},'曲面補正'),h('option',{value:'shadow'},'影補正'));}
+  function surfaceSelect(camera=false){return h('select',{class:camera?'scan-mode camera-surface':'scan-mode','aria-label':'曲面推定',value:surfaceMethod,onChange:(event:Event)=>{methodChosen=true;setSurfaceMethod((event.currentTarget as HTMLSelectElement).value as SurfaceMethod);}},h('option',{value:'neural',disabled:()=>!hasGpu()},'曲面推定 NN'),h('option',{value:'classical'},'曲面推定 従来'));}
   function resultCard(suite:Suite){
     let textarea!:HTMLTextAreaElement;
     const [copied,setCopied]=createSignal(false);
@@ -226,7 +237,7 @@ function App(){
       h('button',{type:'button',class:'icon-button primary','aria-label':'カメラで読む',title:'カメラで読む',onClick:start},icon('camera')),
       h('label',{class:'icon-button upload-button',title:'写真を選ぶ'},icon('image'),h('input',{type:'file',accept:'image/*,.heic,.heif',multiple:true,'aria-label':'写真を選ぶ',onChange:files})),
       h('button',{type:'button',class:'icon-button','aria-label':'画像を貼り付け',title:'画像を貼り付け',onClick:pasteButton},icon('paste')),
-      modeSelect('scan-mode toolbar-mode'),
+      modeSelect('scan-mode toolbar-mode'),surfaceSelect(),
       h('button',{type:'button',class:'icon-button danger reset-button','aria-label':'すべてリセット',title:'すべてリセット',onClick:reset},icon('reset'))),
     h('p',{class:'status',role:'status'},message),
     h('section',{'aria-label':'読み取り結果',class:'groups'},
@@ -234,14 +245,14 @@ function App(){
         const suites=collection().suites.filter(s=>s.parts[0].total===group.total&&s.parts[0].parity===group.parity);
         return h('div',{class:'group'},group.total>1?h('div',{class:'parts'},...group.slots.map((slot,i)=>h('span',{class:slot.length?'part done':'part','aria-label':`${i+1}番 ${slot.length?`${slot.length}種類読み込み済み`:'未読み込み'}`},String(i+1),slot.length>1?h('span',{class:'part-count','aria-hidden':'true'},String(slot.length)):null))):null,...suites.map(resultCard))();
       }):h('p',{class:'empty'},'QRコードを読ませてください')()),
-    h('footer',h('span','読み取りデータはこの端末内で処理されます。'),h('span',{class:'build-commit'},'コミット: ',h('code',buildCommit))),
+    h('footer',h('span','読み取りデータはこの端末内で処理されます。'),h('span',{class:'build-commit'},'コミット: ',h('code',buildCommit),()=>gpuKnown()&&!hasGpu()?' No GPU':'')),
     h('div',{class:()=>`camera-stage ${active()?'':'hidden'}`},
       h('div',{class:'camera',ref:(el:HTMLDivElement)=>{camera=el;},onPointerDown:(e:PointerEvent)=>{e.preventDefault();camera.setPointerCapture(e.pointerId);pointer(e);void focusPointer(e);},onPointerMove:(e:PointerEvent)=>{if(pointers.has(e.pointerId))pointer(e);},onPointerUp:(e:PointerEvent)=>pointers.remove(e.pointerId),onPointerCancel:(e:PointerEvent)=>pointers.remove(e.pointerId),onLostPointerCapture:(e:PointerEvent)=>pointers.remove(e.pointerId)},
         h('video',{ref:(el:HTMLVideoElement)=>{video=el;},autoplay:true,muted:true,playsinline:true}),
         h('svg',{viewBox:()=>`0 0 ${viewSize().width} ${viewSize().height}`,preserveAspectRatio:'none','aria-hidden':'true'},()=>detected().map(code=>{const points=geometry(code),status=hasPart(collection(),asPart(code))?'done':'new',x=points[0].x,y=Math.max(16,points[0].y-14);return h('g',{class:`qr-marker ${status}`},h('polygon',{points:points.map(p=>`${p.x},${p.y}`).join(' ')}),h('rect',{x,y:y-14,width:code.sequenceSize>0?48:30,height:26,rx:13}),h('text',{x:x+7,y:y+5},`${code.sequenceSize>0?code.sequenceIndex+1+' ':''}${status==='done'?'✓':'+'}`))();})),
         ()=>focusPoint()?h('span',{class:'focus-ring',style:{left:`${focusPoint()!.x}px`,top:`${focusPoint()!.y}px`},'aria-hidden':'true'})():null),
       ()=>torchAvailable()?h('button',{type:'button',class:()=>`icon-button camera-torch ${torchOn()?'on':''}`,'aria-label':()=>torchOn()?'ライトを消す':'ライトを点ける','aria-pressed':()=>String(torchOn()),title:'ライト',disabled:torchBusy,onClick:toggleTorch},icon('torch'))():null,
-      modeSelect('scan-mode camera-mode'),
+      modeSelect('scan-mode camera-mode'),surfaceSelect(true),
       h('button',{type:'button',class:'icon-button camera-close','aria-label':'カメラを停止',title:'カメラを停止',onClick:stop},icon('close')),
       h('button',{type:'button',class:()=>`icon-button camera-record ${recordingPhase()==='recording'?'recording':''}`,'aria-label':()=>recordingPhase()==='recording'?'録画を停止して保存':'録画を開始','aria-pressed':()=>String(recordingPhase()==='recording'),title:recordingSupported?'カメラ映像を録画して保存':'このブラウザーは録画に対応していません',disabled:()=>!recordingSupported||recordingPhase()==='stopping',onClick:toggleRecording},()=>recordingPhase()==='recording'?icon('stop')():icon('record')()),
       ()=>recordingPhase()!=='idle'?h('span',{class:'recording-status',role:'status'},()=>recordingPhase()==='stopping'?'録画を保存中…':`録画中 ${Math.floor(recordingSeconds()/60)}:${String(recordingSeconds()%60).padStart(2,'0')}`)():null,

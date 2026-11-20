@@ -166,42 +166,35 @@ export function solve(a: number[][], b: number[]): number[] {
   return m.map((row) => row[n]);
 }
 
-export function finderSurface(
-  base: Surface,
+export function refineFinderFrame(
+  initial: number[],
   value: (x: number, y: number) => number,
-): Surface | undefined {
-  let size = base.size;
-  const poses: number[][] = [];
-  const observations: { u: number; v: number; x: number; y: number }[] = [];
-  for (const [cx, cy] of [[3.5, 3.5], [size - 3.5, 3.5], [3.5, size - 3.5]]) {
-    const u = cx / size * 2 - 1,
-      v = cy / size * 2 - 1,
-      p = base.map(u, v),
-      px = base.map(u + 2 / size, v),
-      py = base.map(u, v + 2 / size);
-    const initial = [p.x, p.y, px.x - p.x, px.y - p.y, py.x - p.x, py.y - p.y];
-    const marks: { x: number; y: number; target: number }[] = [];
-    for (let y = -3; y <= 3; y++) {
-      for (let x = -3; x <= 3; x++) {
-        const d = Math.max(Math.abs(x), Math.abs(y)),
-          target = d === 3 || d <= 1 ? 0 : 1;
-        for (const [dx, dy] of [[0, 0], [-.25, -.25], [.25, .25]]) {
-          marks.push({ x: x + dx, y: y + dy, target });
-        }
+  search = true,
+  maximumError = .12,
+): number[] | undefined {
+  const marks: { x: number; y: number; target: number }[] = [];
+  for (let y = -3; y <= 3; y++) {
+    for (let x = -3; x <= 3; x++) {
+      const d = Math.max(Math.abs(x), Math.abs(y)),
+        target = d === 3 || d <= 1 ? 0 : 1;
+      for (const [dx, dy] of [[0, 0], [-.25, -.25], [.25, .25]]) {
+        marks.push({ x: x + dx, y: y + dy, target });
       }
     }
-    const error = (p: number[]) =>
-      marks.reduce(
-        (s, m) =>
-          s +
-          (value(
-              p[0] + p[2] * m.x + p[4] * m.y,
-              p[1] + p[3] * m.x + p[5] * m.y,
-            ) - m.target) ** 2,
-        0,
-      ) / marks.length;
-    let best = Infinity, pose = initial.slice();
-    // Translation and local scale are independent of the global paper pose.
+  }
+  const error = (p: number[]) =>
+    marks.reduce(
+      (s, m) =>
+        s +
+        (value(
+            p[0] + p[2] * m.x + p[4] * m.y,
+            p[1] + p[3] * m.x + p[5] * m.y,
+          ) - m.target) ** 2,
+      0,
+    ) / marks.length;
+  let best = error(initial), pose = initial.slice();
+  // Translation and local scale are independent of the global paper pose.
+  if (search) {
     for (const sx of [.45, .65, .85, 1, 1.2]) {
       for (const sy of [.45, .65, .85, 1, 1.2]) {
         for (const hx of [-.3, 0, .3]) {
@@ -236,41 +229,70 @@ export function finderSurface(
         }
       }
     }
-    let damping = .1;
-    for (let pass = 0; pass < 35; pass++) {
-      const normal = Array.from(
-          { length: 6 },
-          () => new Array<number>(6).fill(0),
-        ),
-        rhs = new Array<number>(6).fill(0);
-      for (const m of marks) {
-        const x = pose[0] + pose[2] * m.x + pose[4] * m.y,
-          y = pose[1] + pose[3] * m.x + pose[5] * m.y,
-          residual = value(x, y) - m.target,
-          gx = (value(x + .6, y) - value(x - .6, y)) / 1.2,
-          gy = (value(x, y + .6) - value(x, y - .6)) / 1.2,
-          j = [gx, gy, gx * m.x, gy * m.x, gx * m.y, gy * m.y];
-        for (let r = 0; r < 6; r++) {
-          rhs[r] -= j[r] * residual;
-          for (let c = 0; c < 6; c++) normal[r][c] += j[r] * j[c];
-        }
-      }
+  }
+  let damping = .1;
+  for (let pass = 0; pass < 35; pass++) {
+    const normal = Array.from(
+        { length: 6 },
+        () => new Array<number>(6).fill(0),
+      ),
+      rhs = new Array<number>(6).fill(0);
+    for (const m of marks) {
+      const x = pose[0] + pose[2] * m.x + pose[4] * m.y,
+        y = pose[1] + pose[3] * m.x + pose[5] * m.y,
+        residual = value(x, y) - m.target,
+        gx = (value(x + .6, y) - value(x - .6, y)) / 1.2,
+        gy = (value(x, y + .6) - value(x, y - .6)) / 1.2,
+        j = [gx, gy, gx * m.x, gy * m.x, gx * m.y, gy * m.y];
       for (let r = 0; r < 6; r++) {
-        normal[r][r] += damping * (normal[r][r] + .001);
+        rhs[r] -= j[r] * residual;
+        for (let c = 0; c < 6; c++) normal[r][c] += j[r] * j[c];
       }
-      const update = solve(normal, rhs),
-        trial = pose.map((v, i) => v + update[i]),
-        score = error(trial);
-      if (score < best) {
-        pose = trial;
-        best = score;
-        damping = Math.max(.001, damping * .5);
-      } else damping *= 5;
-      if (damping > 1e6 || Math.max(...update.map(Math.abs)) < .001) break;
     }
-    if (best > .12) return;
+    for (let r = 0; r < 6; r++) {
+      normal[r][r] += damping * (normal[r][r] + .001);
+    }
+    const update = solve(normal, rhs),
+      trial = pose.map((v, i) => v + update[i]),
+      score = error(trial);
+    if (score < best) {
+      pose = trial;
+      best = score;
+      damping = Math.max(.001, damping * .5);
+    } else damping *= 5;
+    if (damping > 1e6 || Math.max(...update.map(Math.abs)) < .001) break;
+  }
+  if (best > maximumError) return;
+  return pose;
+}
+
+export function finderSurface(
+  base: Surface,
+  value: (x: number, y: number) => number,
+): Surface | undefined {
+  const size = base.size;
+  const poses: number[][] = [];
+  for (const [cx, cy] of [[3.5, 3.5], [size - 3.5, 3.5], [3.5, size - 3.5]]) {
+    const u = cx / size * 2 - 1,
+      v = cy / size * 2 - 1,
+      p = base.map(u, v),
+      px = base.map(u + 2 / size, v),
+      py = base.map(u, v + 2 / size);
+    const initial = [p.x, p.y, px.x - p.x, px.y - p.y, py.x - p.x, py.y - p.y];
+    const pose = refineFinderFrame(initial, value);
+    if (!pose) return;
     poses.push(pose);
   }
+  return surfaceFromFrames(base, poses, value);
+}
+
+export function surfaceFromFrames(
+  base: Surface,
+  poses: number[][],
+  value: (x: number, y: number) => number,
+): Surface | undefined {
+  let size = base.size;
+  const observations: { u: number; v: number; x: number; y: number }[] = [];
   const copies = [poses[1], poses[2]].map((p, copy) =>
     Array.from({ length: 18 }, (_, i) => {
       const a = -7 + i % 3,

@@ -3,6 +3,7 @@ import { createVideoDecoder } from "./decoder.ts";
 import type { ScanMode } from "./scan.ts";
 
 /** One worker is loaded with the page; frames and decoding data stay on the device. */
+import type { SurfaceMethod } from "./neural-scan.ts";
 export class CameraDecoder {
   private worker: Worker | undefined;
   private fallback = createVideoDecoder();
@@ -11,7 +12,7 @@ export class CameraDecoder {
     number,
     { resolve: (codes: ReadResult[]) => void; reject: (error: Error) => void }
   >();
-  constructor() {
+  constructor(private gpuStatus: (gpu: boolean) => void = () => {}) {
     if (typeof Worker === "undefined") return;
     try {
       const url = new URL("./camera-worker.js", document.baseURI);
@@ -22,6 +23,10 @@ export class CameraDecoder {
       );
       this.worker = new Worker(url, { type: "module" });
       this.worker.onmessage = (event: MessageEvent) => {
+        if (typeof event.data.gpu === "boolean") {
+          this.gpuStatus(event.data.gpu);
+          return;
+        }
         const request = this.requests.get(event.data.id);
         if (!request) return;
         this.requests.delete(event.data.id);
@@ -31,6 +36,7 @@ export class CameraDecoder {
       this.worker.onerror = () => {
         this.worker?.terminate();
         this.worker = undefined;
+        this.gpuStatus(false);
         for (const request of this.requests.values()) {
           request.reject(new Error("Camera decoder worker failed"));
         }
@@ -66,10 +72,15 @@ export class CameraDecoder {
       }
     }
   }
-  scan(image: ImageData, mode: ScanMode): Promise<ReadResult[]> {
+  scan(
+    image: ImageData,
+    mode: ScanMode,
+    method: SurfaceMethod = "neural",
+    allowNeural = true,
+  ): Promise<ReadResult[]> {
     return this.worker
-      ? this.request({ image, mode }, [image.data.buffer])
-      : this.fallback(image, mode);
+      ? this.request({ image, mode, method, allowNeural }, [image.data.buffer])
+      : this.fallback(image, mode, method, allowNeural);
   }
   dispose() {
     this.worker?.terminate();

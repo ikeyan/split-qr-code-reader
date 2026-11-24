@@ -54,6 +54,7 @@ export function* fitQrSurfaces(
   candidate: QrCandidate,
   cycle?: number | readonly number[],
   initial?: { size: number; parameters: number[] },
+  debug?: { marker(pose: number[]): void; reject(surface: Surface): void },
 ): Generator<Surface> {
   const binary = correctIllumination(image, "mean"), { width, height } = image;
   const smooth = new Float32Array(width * height);
@@ -157,7 +158,11 @@ export function* fitQrSurfaces(
             hypothesis,
             map: mapper(candidate.position, parameters, size),
           },
-          finder = finderSurface(base, (x, y) => interpolate(smooth, x, y));
+          finder = finderSurface(
+            base,
+            (x, y) => interpolate(smooth, x, y),
+            debug?.marker,
+          );
         if (finder) {
           const mesh = alignmentMesh(
             finder,
@@ -166,7 +171,7 @@ export function* fitQrSurfaces(
           if (mesh || finder.score <= .14) {
             yield mesh && mesh.score < finder.score ? mesh : finder;
             if (cycle !== undefined) continue;
-          }
+          } else debug?.reject(finder);
         }
       }
       const finders = template.filter((m) => {
@@ -328,7 +333,7 @@ export function* fitQrSurfaces(
         const mesh = alignmentMesh(surface, value);
         if (mesh) yield mesh;
         if (!mesh || cycle === undefined) yield surface;
-      }
+      } else debug?.reject({ size, score, map, parameters });
     }
   }
 }

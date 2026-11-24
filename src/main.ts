@@ -1,3 +1,5 @@
+import {drawCameraDebug} from './camera-debug-view.ts';
+import {scanGuide} from './scan-guide.ts';
 import {batch,createSignal,onCleanup} from 'solid-js';
 import {render} from 'solid-js/web';
 import h from 'solid-js/h';
@@ -48,25 +50,44 @@ function App(){
   const [torchBusy,setTorchBusy]=createSignal(false);
   const [recordingPhase,setRecordingPhase]=createSignal<RecordingPhase>('idle');
   const [recordingSeconds,setRecordingSeconds]=createSignal(0);
+  const [debugCamera,setDebugCamera]=createSignal(false);
+  const [debugReady,setDebugReady]=createSignal(false);
   const recordingSupported=typeof MediaRecorder!=='undefined';
+  const debugRecordingSupported=typeof HTMLCanvasElement.prototype.captureStream==='function';
+  let debugRevision=0;
+  let debugRecording:MediaStream|undefined;
+  let debugTrack:CanvasCaptureMediaStreamTrack|undefined;
   let recordingTimer:ReturnType<typeof setInterval>|undefined;
   const recording=new CameraRecording({
     create:createCameraRecorder,
     state:phase=>{
       clearInterval(recordingTimer);setRecordingPhase(phase);
+      if(phase==='idle'){
+        debugRecording?.getTracks().forEach(track=>track.stop());
+        debugRecording=undefined;
+        debugTrack=undefined;
+      }
       if(phase==='recording'){
         const started=Date.now();setRecordingSeconds(0);
         recordingTimer=setInterval(()=>setRecordingSeconds(Math.floor((Date.now()-started)/1000)),1000);
       }
     },
     save:blob=>{
-      const name=recordingFilename(blob.type,buildCommit==='開発版'?'dev':buildCommit);
+      const name=recordingFilename(blob.type,buildCommit==='開発版'?'dev':buildCommit)
+        .replace(/\.(webm|mp4)$/,debugCamera()?'-debug.$1':'.$1');
       const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;link.click();
       setTimeout(()=>URL.revokeObjectURL(url),60000);setMessage('録画を保存しました。');
     },
-    error:()=>setMessage('録画できませんでした。ブラウザーの対応状況や空き容量を確認してください。'),
+    error:()=>{
+      if(recordingPhase()==='idle'){
+        debugRecording?.getTracks().forEach(track=>track.stop());
+        debugRecording=undefined;
+        debugTrack=undefined;
+      }
+      setMessage('録画できませんでした。ブラウザーの対応状況や空き容量を確認してください。');
+    },
   });
-  let video!:HTMLVideoElement,camera!:HTMLDivElement,fullDialog!:HTMLDialogElement;
+  let video!:HTMLVideoElement,debugCanvas!:HTMLCanvasElement,camera!:HTMLDivElement,fullDialog!:HTMLDialogElement;
   let stream:MediaStream|undefined;
   let supported:CameraSupported={};
   let cameraJobs:Promise<void>=Promise.resolve();
@@ -82,6 +103,7 @@ function App(){
 
   function stop(){
     generation++;
+    setDebugReady(false);
     recording.stop();
     const current=stream;stream=undefined;
     current?.getTracks().forEach(track=>track.stop());
@@ -135,10 +157,18 @@ function App(){
         if(document.hidden){setTimeout(scan,250);return;}
         try{
           const width=video.videoWidth,height=video.videoHeight;
-          if(width&&height){canvas.width=width;canvas.height=height;context.drawImage(video,0,0,width,height);
-            const codes=await cameraDecoder.scan(context.getImageData(0,0,width,height),scanMode(),surfaceMethod(),hasGpu());
+          if(width&&height){
+            const debugVersion=debugRevision, debug=debugCamera(), mode=scanMode(), method=surfaceMethod();
+            canvas.width=width;canvas.height=height;context.drawImage(video,0,0,width,height);
+            const {codes,debug:trace}=await cameraDecoder.scan(context.getImageData(0,0,width,height),mode,method,hasGpu(),debug);
             if(current!==generation)return;
-            setViewSize({width:camera.clientWidth,height:camera.clientHeight});setDetected(codes);
+            const view={width:camera.clientWidth,height:camera.clientHeight};
+            if(trace&&debugVersion===debugRevision&&mode===scanMode()&&method===surfaceMethod()){
+              drawCameraDebug(debugCanvas,canvas,view,trace);
+              debugTrack?.requestFrame?.();
+              setDebugReady(true);
+            }
+            setViewSize(view);setDetected(codes);
             const next=observations.update(codes,Date.now());
             if(next.map(item=>item.key).join('\0')!==observed().map(item=>item.key).join('\0'))setObserved(next);
             takeAtPointers(codes);
@@ -172,7 +202,19 @@ function App(){
   }
   function toggleRecording(){
     if(recordingPhase()==='recording')recording.stop();
-    else if(recordingPhase()==='idle'&&stream){setMessage('');recording.start(stream);}
+    else if(recordingPhase()==='idle'&&stream){
+      setMessage('');
+      if(debugCamera()){
+        if(!debugRecordingSupported||!debugReady())return;
+        try{
+          debugRecording=debugCanvas.captureStream(15);
+          debugTrack=debugRecording.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack|undefined;
+        }
+        catch{setMessage('このブラウザーでは合成映像を録画できません。');return;}
+      }
+      recording.start(debugRecording??stream);
+      debugTrack?.requestFrame?.();
+    }
   }
   async function readImages(images:Iterable<Blob>){
     let seen=false,found=false,failed=false;
@@ -239,6 +281,7 @@ function App(){
       h('button',{type:'button',class:'icon-button','aria-label':'画像を貼り付け',title:'画像を貼り付け',onClick:pasteButton},icon('paste')),
       modeSelect('scan-mode toolbar-mode'),surfaceSelect(),
       h('button',{type:'button',class:'icon-button danger reset-button','aria-label':'すべてリセット',title:'すべてリセット',onClick:reset},icon('reset'))),
+    scanGuide(),
     h('p',{class:'status',role:'status'},message),
     h('section',{'aria-label':'読み取り結果',class:'groups'},
       ()=>collection().groups.length?collection().groups.map(group=>{
@@ -249,12 +292,17 @@ function App(){
     h('div',{class:()=>`camera-stage ${active()?'':'hidden'}`},
       h('div',{class:'camera',ref:(el:HTMLDivElement)=>{camera=el;},onPointerDown:(e:PointerEvent)=>{e.preventDefault();camera.setPointerCapture(e.pointerId);pointer(e);void focusPointer(e);},onPointerMove:(e:PointerEvent)=>{if(pointers.has(e.pointerId))pointer(e);},onPointerUp:(e:PointerEvent)=>pointers.remove(e.pointerId),onPointerCancel:(e:PointerEvent)=>pointers.remove(e.pointerId),onLostPointerCapture:(e:PointerEvent)=>pointers.remove(e.pointerId)},
         h('video',{ref:(el:HTMLVideoElement)=>{video=el;},autoplay:true,muted:true,playsinline:true}),
-        h('svg',{viewBox:()=>`0 0 ${viewSize().width} ${viewSize().height}`,preserveAspectRatio:'none','aria-hidden':'true'},()=>detected().map(code=>{const points=geometry(code),status=hasPart(collection(),asPart(code))?'done':'new',x=points[0].x,y=Math.max(16,points[0].y-14);return h('g',{class:`qr-marker ${status}`},h('polygon',{points:points.map(p=>`${p.x},${p.y}`).join(' ')}),h('rect',{x,y:y-14,width:code.sequenceSize>0?48:30,height:26,rx:13}),h('text',{x:x+7,y:y+5},`${code.sequenceSize>0?code.sequenceIndex+1+' ':''}${status==='done'?'✓':'+'}`))();})),
+        h('canvas',{ref:(el:HTMLCanvasElement)=>{debugCanvas=el;},class:()=>debugReady()?'camera-debug-frame':'camera-debug-frame hidden','aria-hidden':'true'}),
+        h('svg',{class:()=>debugReady()?'hidden':'',viewBox:()=>`0 0 ${viewSize().width} ${viewSize().height}`,preserveAspectRatio:'none','aria-hidden':'true'},()=>detected().map(code=>{const points=geometry(code),status=hasPart(collection(),asPart(code))?'done':'new',x=points[0].x,y=Math.max(16,points[0].y-14);return h('g',{class:`qr-marker ${status}`},h('polygon',{points:points.map(p=>`${p.x},${p.y}`).join(' ')}),h('rect',{x,y:y-14,width:code.sequenceSize>0?48:30,height:26,rx:13}),h('text',{x:x+7,y:y+5},`${code.sequenceSize>0?code.sequenceIndex+1+' ':''}${status==='done'?'✓':'+'}`))();})),
         ()=>focusPoint()?h('span',{class:'focus-ring',style:{left:`${focusPoint()!.x}px`,top:`${focusPoint()!.y}px`},'aria-hidden':'true'})():null),
       ()=>torchAvailable()?h('button',{type:'button',class:()=>`icon-button camera-torch ${torchOn()?'on':''}`,'aria-label':()=>torchOn()?'ライトを消す':'ライトを点ける','aria-pressed':()=>String(torchOn()),title:'ライト',disabled:torchBusy,onClick:toggleTorch},icon('torch'))():null,
       modeSelect('scan-mode camera-mode'),surfaceSelect(true),
+      h('button',{type:'button',class:'camera-debug-toggle','aria-pressed':()=>String(debugCamera()),
+        disabled:()=>recordingPhase()!=='idle',
+        onClick:()=>{debugRevision++;setDebugCamera(!debugCamera());setDebugReady(false);}},
+        '解析を重ねる'),
       h('button',{type:'button',class:'icon-button camera-close','aria-label':'カメラを停止',title:'カメラを停止',onClick:stop},icon('close')),
-      h('button',{type:'button',class:()=>`icon-button camera-record ${recordingPhase()==='recording'?'recording':''}`,'aria-label':()=>recordingPhase()==='recording'?'録画を停止して保存':'録画を開始','aria-pressed':()=>String(recordingPhase()==='recording'),title:recordingSupported?'カメラ映像を録画して保存':'このブラウザーは録画に対応していません',disabled:()=>!recordingSupported||recordingPhase()==='stopping',onClick:toggleRecording},()=>recordingPhase()==='recording'?icon('stop')():icon('record')()),
+      h('button',{type:'button',class:()=>`icon-button camera-record ${recordingPhase()==='recording'?'recording':''}`,'aria-label':()=>recordingPhase()==='recording'?'録画を停止して保存':'録画を開始','aria-pressed':()=>String(recordingPhase()==='recording'),title:()=>debugCamera()&&!debugRecordingSupported?'このブラウザーは合成映像の録画に対応していません':recordingSupported?'カメラ映像を録画して保存':'このブラウザーは録画に対応していません',disabled:()=>!recordingSupported||recordingPhase()==='stopping'||(recordingPhase()==='idle'&&debugCamera()&&(!debugRecordingSupported||!debugReady())),onClick:toggleRecording},()=>recordingPhase()==='recording'?icon('stop')():icon('record')()),
       ()=>recordingPhase()!=='idle'?h('span',{class:'recording-status',role:'status'},()=>recordingPhase()==='stopping'?'録画を保存中…':`録画中 ${Math.floor(recordingSeconds()/60)}:${String(recordingSeconds()%60).padStart(2,'0')}`)():null,
       h('p',{class:'camera-error',role:'status'},message)),
     ()=>active()&&observed().length?h('aside',{class:()=>`observed ${preview()?'raised':''}`,'aria-label':'認識中の QR コード'},...observed().map(item=>h('div',{class:'observed-item'},item.part?h('span',{class:'observed-part'},item.part):null,item.url?h('a',{href:item.url,target:'_blank',rel:'noopener noreferrer',class:'observed-text',title:item.url},item.text):h('span',{class:'observed-text'},item.text||'QR'))))():null,

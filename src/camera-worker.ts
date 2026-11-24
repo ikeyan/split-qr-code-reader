@@ -14,6 +14,7 @@ globalThis.onmessage = (event: MessageEvent) => {
     mode?: ScanMode;
     method?: SurfaceMethod;
     allowNeural?: boolean;
+    debug?: boolean;
   };
   queue = queue.then(async () => {
     try {
@@ -23,13 +24,14 @@ globalThis.onmessage = (event: MessageEvent) => {
         return;
       }
       const image = request.image!;
-      const codes = await decode(
+      const result = await decode(
         new ImageData(image.data, image.width, image.height),
         request.mode ?? "auto",
         request.method ?? "neural",
         request.allowNeural ?? true,
+        request.debug ?? false,
       );
-      globalThis.postMessage({ id: request.id, codes });
+      globalThis.postMessage({ id: request.id, ...result });
     } catch (error) {
       globalThis.postMessage({ id: request.id, error: String(error) });
     }

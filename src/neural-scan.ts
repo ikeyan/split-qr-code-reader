@@ -1,3 +1,4 @@
+import type { CameraTrace } from "./camera-trace.ts";
 import type { ReadResult } from "zxing-wasm/reader";
 import type { Raster } from "./image-enhance.ts";
 import type { NeuralRunner } from "./nn-runtime.ts";
@@ -142,6 +143,7 @@ export async function neuralReads(
   runner: NeuralRunner,
   method: SurfaceMethod,
   raw: ReadResult[] = [],
+  trace?: CameraTrace,
 ): Promise<ReadResult[]> {
   const binary = correctIllumination(image, "mean");
   const smooth: Raster = {
@@ -165,7 +167,7 @@ export async function neuralReads(
   const known = validReads(raw);
   const candidates = [
     ...raw.filter((c) => c.isValid === false && /^\d+$/.test(c.version)),
-    ...locateQrCandidates(image, known, true),
+    ...locateQrCandidates(image, known, true, trace),
   ];
   const jobs: { candidate: QrCandidate; initial: number[][] }[] = [];
   for (const candidate of candidates) {
@@ -209,6 +211,7 @@ export async function neuralReads(
   blobFrames.forEach((p, i) =>
     input.set(markerInput(image, p), (jobs.length * 3 + i) * 1024)
   );
+  trace?.pass("marker-nn");
   const predictions = await runner.run(
     "marker",
     input,
@@ -216,6 +219,7 @@ export async function neuralReads(
   );
   const surfaces: { frames: number[][]; size: number; base: Surface }[] = [];
   const append = (candidate: QrCandidate, frames: number[][]) => {
+    trace?.candidate(candidate.position, "marker-nn", true);
     const copies = [frames[1], frames[2]].map((p, k) =>
       Array.from({ length: 18 }, (_, i) => {
         const x = k ? -3 + Math.floor(i / 3) : -7 + i % 3,
@@ -285,6 +289,7 @@ export async function neuralReads(
       }
       if (!fitted) fitted = refineFinderFrame(p, value, true, .18);
       if (!fitted) break;
+      trace?.markerFrame(fitted);
       frames.push(fitted);
     }
     if (frames.length !== 3) continue;
@@ -306,6 +311,7 @@ export async function neuralReads(
         p[5] * q[5],
       ],
       fitted = refineFinderFrame(seed, value, false, .18);
+    if (fitted) trace?.markerFrame(fitted);
     if (
       fitted &&
       !markers.some((m) =>
@@ -407,7 +413,11 @@ export async function neuralReads(
       score += (value(p.x, p.y) - (m.dark ? 0 : 1)) ** 2;
     }
     surface.score = score / marks.length;
-    if (surface.score > .16) continue;
+    const pass = method === "neural" ? "surface-nn" : "classical";
+    if (surface.score > .16) {
+      trace?.grid(surface, pass, "rejected");
+      continue;
+    }
     surface = alignmentMesh(surface, value) ?? surface;
     const { raster, point } = sampleQrSurface(binary, surface, true);
     const decoded = validReads(
@@ -416,6 +426,13 @@ export async function neuralReads(
         isPure: true,
         binarizer: "FixedThreshold",
       }),
+    );
+    trace?.grid(
+      surface,
+      pass,
+      decoded.length ? "decoded" : "unread",
+      undefined,
+      raster,
     );
     results = mergeReads(
       results,

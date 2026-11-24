@@ -1,3 +1,4 @@
+import {CameraTrace,type CameraScanResult} from './camera-trace.ts';
 import {prepareZXingModule,readBarcodes,type ReadResult} from 'zxing-wasm/reader';
 import wasm from './wasm-data.ts';
 import {curvedReads,enhancedReads,locatingOptions,mergeReads,scanRaster,shadowReads,validReads,type ScanMode,type RasterReader} from './scan.ts';
@@ -11,21 +12,24 @@ const rasterReader:RasterReader=(image,options)=>readBarcodes(new ImageData(imag
 export function createVideoDecoder(){
   let scanner=new VideoScanner();
   let previousMethod:SurfaceMethod|undefined;
-  return async(image:ImageData,mode:ScanMode,method:SurfaceMethod='neural',allowNeural=true)=>{
+  return async(image:ImageData,mode:ScanMode,method:SurfaceMethod='neural',allowNeural=true,debug=false):Promise<CameraScanResult>=>{
     await ready;
+    const trace=debug?new CameraTrace():undefined;
+    const result=(codes:ReadResult[]):CameraScanResult=>trace?{codes,debug:trace.finish(codes)}:{codes};
     let raw:ReadResult[]|undefined;
     if(method!==previousMethod){scanner=new VideoScanner();previousMethod=method;}
     if(allowNeural&&(mode==='auto'||mode==='curve')){
       const runner=await neuralRunner();
       if(runner){
         raw=await rasterReader(image,locatingOptions);
+        trace?.reads("original",raw);
         try{
-          const codes=await neuralReads(image,rasterReader,runner,method,raw);
-          if(codes.length)return mergeReads(validReads(raw),codes);
+          const codes=await neuralReads(image,rasterReader,runner,method,raw,trace);
+          if(codes.length)return result(mergeReads(validReads(raw),codes));
         }catch{disableNeural();}
       }
     }
-    return scanner.scan(image,rasterReader,mode,raw);
+    return result(await scanner.scan(image,rasterReader,mode,raw,trace));
   };
 }
 async function rasterize(blob:Blob):Promise<{raster:Raster;scaleX:number;scaleY:number}>{

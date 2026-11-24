@@ -1,3 +1,4 @@
+import type { CameraDebugFrame } from "../src/camera-trace.ts";
 import { chromium } from "npm:playwright-core@1.65.0";
 import { strict as assert } from "node:assert";
 import { PNG } from "pngjs";
@@ -91,6 +92,10 @@ try {
       constructor(url: string | URL, options?: WorkerOptions) {
         super(url, options);
         this.addEventListener("message", (event) => {
+          if (event.data.debug) {
+            (globalThis as unknown as { latestDebug: CameraDebugFrame })
+              .latestDebug = event.data.debug;
+          }
           if (event.data.codes?.length) {
             const method = this.sent.get(event.data.id);
             if (method) methods.push(method);
@@ -148,6 +153,13 @@ try {
       document.documentElement.scrollWidth <= innerWidth
     ),
   );
+  await page.getByText("読み取り方法の違い", { exact: true }).click();
+  assert.ok(await page.locator(".scan-flow").isVisible());
+  assert.ok(
+    await page.evaluate(() =>
+      document.documentElement.scrollWidth <= innerWidth
+    ),
+  );
   await page.getByLabel("写真を選ぶ", { exact: true }).setInputFiles({
     name: "generated-qr.png",
     mimeType: "image/png",
@@ -200,6 +212,95 @@ try {
     (globalThis as unknown as { workerMethods: string[] }).workerMethods
       .includes("neural")
   );
+  const toggle = page.getByRole("button", {
+    name: "解析を重ねる",
+    exact: true,
+  });
+  const frame = page.locator(".camera-debug-frame");
+  assert.ok(!await frame.isVisible());
+  await toggle.click();
+  await frame.waitFor({ state: "visible" });
+  assert.ok(
+    await page.evaluate(() => {
+      const trace = (globalThis as unknown as { latestDebug: CameraDebugFrame })
+        .latestDebug;
+      return trace.passes.original === 1 && trace.markers.some((m) =>
+        m.axes?.length
+      ) &&
+        trace.grids.some((g) =>
+          g.pass === "surface-nn" && g.outcome === "decoded" && !!g.sample
+        ) &&
+        trace.decoded.length > 0;
+    }),
+  );
+  const record = page.getByRole("button", { name: "録画を開始", exact: true });
+  await record.click();
+  assert.ok(await toggle.isDisabled());
+  // Allow at least one decoded-and-composited frame to reach the encoder.
+  await page.waitForTimeout(3000);
+  const downloadReady = page.waitForEvent("download", { timeout: 12000 }).catch(
+    () => undefined,
+  );
+  await page.getByRole("button", { name: "録画を停止して保存", exact: true })
+    .click();
+  const download = await downloadReady;
+  assert.ok(download, await page.locator(".camera-error").innerText());
+  assert.match(download.suggestedFilename(), /-debug\.(mp4|webm)$/);
+  const clip = await Deno.readFile(await download.path());
+  const hasOverlay = await page.evaluate(async ({ data, mimeType }) => {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.src = URL.createObjectURL(
+      new Blob([new Uint8Array(data)], { type: mimeType }),
+    );
+    try {
+      document.body.append(video);
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(Error("Recording frame did not load")),
+          10000,
+        );
+        const done = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+        video.requestVideoFrameCallback(done);
+        void video.play().catch((error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      });
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(video, 0, 0);
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let green = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (
+          pixels[i + 1] > 180 && pixels[i + 1] - pixels[i] > 60 &&
+          pixels[i + 1] - pixels[i + 2] > 40
+        ) green++;
+      }
+      return green;
+    } finally {
+      video.pause();
+      video.remove();
+      URL.revokeObjectURL(video.src);
+    }
+  }, {
+    data: Array.from(clip),
+    mimeType: download.suggestedFilename().endsWith("mp4")
+      ? "video/mp4"
+      : "video/webm",
+  });
+  assert.ok(
+    hasOverlay > 60,
+    `The recorded video should contain the green decode outline (green pixels: ${hasOverlay})`,
+  );
+  await toggle.click();
+  await frame.waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "カメラを停止", exact: true }).click();
   await page.evaluate(() => {
     (globalThis as unknown as { testDevice: GPUDevice }).testDevice.destroy();
@@ -232,6 +333,7 @@ try {
       camera: "exact payload",
       photo: "exact payload",
       switching: "passed",
+      debugRecording: "overlay verified in saved video",
       deviceLoss: "No GPU",
       missingAndDenied: "classical fallback",
     }),

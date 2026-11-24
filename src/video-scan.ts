@@ -1,3 +1,4 @@
+import type { CameraTrace } from "./camera-trace.ts";
 import type { ReadResult } from "zxing-wasm/reader";
 import {
   candidateRegions,
@@ -76,6 +77,7 @@ export class VideoScanner {
     reader: RasterReader,
     mode: ScanMode = "auto",
     priorRaw?: ReadResult[],
+    trace?: CameraTrace,
   ): Promise<ReadResult[]> {
     const dimensions = `${image.width}x${image.height}`;
     if (mode !== this.mode || dimensions !== this.dimensions) {
@@ -88,6 +90,7 @@ export class VideoScanner {
     }
     const frame = this.frame++;
     const raw = priorRaw ?? await reader(image, locatingOptions);
+    if (!priorRaw) trace?.reads("original", raw);
     let results = validReads(raw), candidates = raw;
     let independent: QrCandidate[] = [];
     if (mode === "standard") return results;
@@ -107,11 +110,13 @@ export class VideoScanner {
         }
       }
       const mapped = translated(local, region, source);
+      trace?.reads("tracked", mapped);
       results = mergeReads(results, validReads(mapped));
       candidates = [...candidates, ...mapped];
     }
     if (mode === "sharpen" || !results.length) {
       const enhanced = await reader(sharpen(image, 2, 3), locatingOptions);
+      trace?.reads("sharpen", enhanced);
       results = mergeReads(results, validReads(enhanced));
       candidates = [...candidates, ...enhanced];
     }
@@ -126,6 +131,7 @@ export class VideoScanner {
             ...locatingOptions,
             binarizer: "FixedThreshold",
           });
+          trace?.reads("shadow", shadow);
           results = mergeReads(results, validReads(shadow));
           candidates = [...candidates, ...shadow];
         }
@@ -137,6 +143,7 @@ export class VideoScanner {
     }
     if (!results.length) {
       const mild = await reader(sharpen(image, 1, 2), locatingOptions);
+      trace?.reads("sharpen", mild);
       results = mergeReads(results, validReads(mild));
       candidates = [...candidates, ...mild];
       // Overlapping tiles enlarge small QR codes without fitting the whole scene.
@@ -163,11 +170,12 @@ export class VideoScanner {
         ];
       }
       const mapped = translated(found, region, tile);
+      trace?.reads("tile", mapped);
       results = mergeReads(results, validReads(mapped));
       candidates = [...candidates, ...mapped];
       // A clipped neighbouring symbol can produce a numeric but unusable
       // native candidate. It must not suppress independent finder detection.
-      independent = locateQrCandidates(image);
+      independent = locateQrCandidates(image, [], false, trace);
     }
     const updated = new Set<Pending>();
     for (
@@ -242,6 +250,7 @@ export class VideoScanner {
     if (job) {
       const region = candidateRegions(image, [job.candidate])[0];
       if (region) {
+        trace?.candidate(job.candidate.position, "classical", true);
         const source = enlarged(cropRaster(image, region)),
           trial = job.winner ?? job.trial++;
         let recovered = false;
@@ -265,26 +274,51 @@ export class VideoScanner {
         const hypotheses = job.winner === undefined
           ? [0, 1, 2, 3, 4].map((start) => trial * 5 + start)
           : trial;
+        const toFrame = (p: { x: number; y: number }) => ({
+          x: region.x + p.x * region.width / source.width,
+          y: region.y + p.y * region.height / source.height,
+        });
         for (
-          const surface of fitQrSurfaces(source, local, hypotheses, job.seed)
+          const surface of fitQrSurfaces(
+            source,
+            local,
+            hypotheses,
+            job.seed,
+            trace && {
+              marker: (pose) => trace.markerFrame(pose, toFrame),
+              reject: (surface) =>
+                trace.grid(surface, "classical", "rejected", toFrame),
+            },
+          )
         ) {
-          if (surface.score > .14) continue;
+          if (surface.score > .14) {
+            trace?.grid(surface, "classical", "rejected", toFrame);
+            continue;
+          }
           const { raster, point: map } = sampleQrSurface(source, surface);
+          let sampled = raster;
           let codes = validReads(
             await reader(raster, { ...scanOptions, isPure: true }),
           );
           if (!codes.length) {
-            const binary =
+            sampled =
               sampleQrSurface(correctIllumination(source, "mean"), surface)
                 .raster;
             codes = validReads(
-              await reader(binary, {
+              await reader(sampled, {
                 ...scanOptions,
                 isPure: true,
                 binarizer: "FixedThreshold",
               }),
             );
           }
+          trace?.grid(
+            surface,
+            "classical",
+            codes.length ? "decoded" : "unread",
+            toFrame,
+            sampled,
+          );
           codes = codes.map((c) => {
             const p = c.position;
             return {

@@ -269,6 +269,7 @@ export function refineFinderFrame(
 export function finderSurface(
   base: Surface,
   value: (x: number, y: number) => number,
+  onMarker?: (pose: number[]) => void,
 ): Surface | undefined {
   const size = base.size;
   const poses: number[][] = [];
@@ -281,6 +282,7 @@ export function finderSurface(
     const initial = [p.x, p.y, px.x - p.x, px.y - p.y, py.x - p.x, py.y - p.y];
     const pose = refineFinderFrame(initial, value);
     if (!pose) return;
+    onMarker?.(pose);
     poses.push(pose);
   }
   return surfaceFromFrames(base, poses, value);

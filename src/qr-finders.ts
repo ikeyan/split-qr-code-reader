@@ -1,3 +1,4 @@
+import type { CameraTrace } from "./camera-trace.ts";
 import type { ReadResult } from "zxing-wasm/reader";
 import type { Raster } from "./image-enhance.ts";
 import { correctIllumination, limitRaster } from "./illumination.ts";
@@ -152,6 +153,7 @@ export function locateQrCandidates(
   original: Raster,
   known: ReadResult[] = [],
   wide = false,
+  trace?: CameraTrace,
 ): QrCandidate[] {
   const image = correctIllumination(limitRaster(original), "mean"),
     { width, height, data } = image;
@@ -249,6 +251,15 @@ export function locateQrCandidates(
       });
     })
   ).sort((a, b) => b.count - a.count).slice(0, 20);
+  trace?.pass("finder");
+  if (trace) {
+    for (const f of best) {
+      trace.marker({
+        x: f.x * original.width / width,
+        y: f.y * original.height / height,
+      });
+    }
+  }
   const triples: { score: number; code: QrCandidate }[] = [];
   for (const a of best) {
     for (const b of best) {
@@ -302,6 +313,9 @@ export function locateQrCandidates(
       )
     ) codes.push(code);
     if (codes.length >= (wide ? 24 : 6)) break;
+  }
+  if (trace) {
+    for (const code of codes) trace.candidate(code.position, "finder");
   }
   return codes;
 }

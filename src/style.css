@@ -8,3 +8,21 @@
 .camera-record{position:absolute;right:max(14px,env(safe-area-inset-right));top:calc(max(14px,env(safe-area-inset-top)) + 54px);background:#162c20e6;color:#ffb3ad}.camera-record:hover:not(:disabled){background:#294b36}.camera-record.recording{background:#ae332e;color:#fff}.camera-record.recording:hover:not(:disabled){background:#922925}.camera-record:not(.recording) svg path{fill:currentColor;stroke:none}.recording-status{position:absolute;top:calc(max(14px,env(safe-area-inset-top)) + 66px);right:calc(max(14px,env(safe-area-inset-right)) + 54px);padding:5px 9px;border-radius:6px;background:#162c20e6;color:#fff;font-size:12px;pointer-events:none}
 
 .camera-surface{position:absolute;top:calc(max(18px,env(safe-area-inset-top)) + 88px);left:50%;transform:translateX(-50%);background:#162c20d9;border-color:#ffffff44;color:white;max-width:calc(100% - 140px)}
+
+.camera-debug-frame{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
+.camera-debug-toggle{position:absolute;top:calc(max(18px,env(safe-area-inset-top)) + 132px);left:50%;transform:translateX(-50%);background:#162c20e6;color:#fff;border:1px solid #ffffff60;border-radius:8px;padding:8px 10px;font:inherit;font-size:12px;white-space:nowrap}
+.camera-debug-toggle[aria-pressed=true]{background:#d9efd9;color:#163621;border-color:#d9efd9}
+.scan-guide{margin-top:14px;font-size:13px;color:#365e44}
+.scan-guide summary{cursor:pointer;width:fit-content}
+.scan-guide p,.scan-guide figure{margin:12px 0}
+.scan-flow{max-width:520px;padding:14px;background:#f2f6ef;border:1px solid #dce5d8;border-radius:12px;text-align:center}
+.scan-flow figcaption{font-weight:700;margin-bottom:10px}
+.scan-flow-row,.scan-flow-branches{display:flex;align-items:center;justify-content:center;gap:8px}
+.scan-flow-branches{align-items:start}
+.scan-flow-branch{display:grid;justify-items:center;gap:3px;min-width:0}
+.scan-flow-node{padding:6px 9px;background:#fff;border:1px solid #dce5d8;border-radius:6px}
+.scan-flow-node small{display:block;font-size:11px}
+.scan-flow-choice{background:#dcefdc;border-color:#a4c6a6}
+.scan-guide-methods{display:grid;grid-template-columns:auto 1fr;gap:4px 9px;max-width:720px}
+.scan-guide-methods dt{font-weight:700}
+.scan-guide-methods dd{margin:0}

@@ -1,4 +1,4 @@
-import type { ReadResult } from "zxing-wasm/reader";
+import type { CameraScanResult } from "./camera-trace.ts";
 import { createVideoDecoder } from "./decoder.ts";
 import type { ScanMode } from "./scan.ts";
 
@@ -10,7 +10,10 @@ export class CameraDecoder {
   private next = 0;
   private requests = new Map<
     number,
-    { resolve: (codes: ReadResult[]) => void; reject: (error: Error) => void }
+    {
+      resolve: (codes: CameraScanResult) => void;
+      reject: (error: Error) => void;
+    }
   >();
   constructor(private gpuStatus: (gpu: boolean) => void = () => {}) {
     if (typeof Worker === "undefined") return;
@@ -31,7 +34,7 @@ export class CameraDecoder {
         if (!request) return;
         this.requests.delete(event.data.id);
         if (event.data.error) request.reject(new Error(event.data.error));
-        else request.resolve(event.data.codes);
+        else request.resolve(event.data);
       };
       this.worker.onerror = () => {
         this.worker?.terminate();
@@ -49,7 +52,7 @@ export class CameraDecoder {
   private request(
     message: object,
     transfer: Transferable[] = [],
-  ): Promise<ReadResult[]> {
+  ): Promise<CameraScanResult> {
     const id = this.next++;
     return new Promise((resolve, reject) => {
       this.requests.set(id, { resolve, reject });
@@ -77,10 +80,13 @@ export class CameraDecoder {
     mode: ScanMode,
     method: SurfaceMethod = "neural",
     allowNeural = true,
-  ): Promise<ReadResult[]> {
+    debug = false,
+  ): Promise<CameraScanResult> {
     return this.worker
-      ? this.request({ image, mode, method, allowNeural }, [image.data.buffer])
-      : this.fallback(image, mode, method, allowNeural);
+      ? this.request({ image, mode, method, allowNeural, debug }, [
+        image.data.buffer,
+      ])
+      : this.fallback(image, mode, method, allowNeural, debug);
   }
   dispose() {
     this.worker?.terminate();

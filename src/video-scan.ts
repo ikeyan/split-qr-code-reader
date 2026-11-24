@@ -285,6 +285,7 @@ export class VideoScanner {
             hypotheses,
             job.seed,
             trace && {
+              rejectStructure: () => trace.pass("structure-rejected"),
               marker: (pose) => trace.markerFrame(pose, toFrame),
               reject: (surface) =>
                 trace.grid(surface, "classical", "rejected", toFrame),

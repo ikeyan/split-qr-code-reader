@@ -3,6 +3,8 @@ import {
   prepareZXingModule,
   readBarcodesFromImageData,
 } from "zxing-wasm/reader";
+import { CameraTrace } from "../src/camera-trace.ts";
+import { VideoScanner } from "../src/video-scan.ts";
 import type { NeuralModels } from "../src/nn-runtime.ts";
 import { GpuNetworks, parseNetworks } from "../src/nn-runtime.ts";
 import { referenceNetworks } from "./nn-reference.ts";
@@ -134,4 +136,56 @@ Deno.test("unavailable WebGPU initializes the classical fallback", async () => {
     undefined,
   );
   assert.throws(() => parseNetworks('{"format":"unknown"}'));
+});
+
+Deno.test("three finder-like squares without timing lines do not reach the learned grid", async () => {
+  const width = 560, height = 450;
+  for (const pitch of [4, 7, 10]) {
+    const data = new Uint8ClampedArray(width * height * 4);
+    data.fill(255);
+    for (const [left, top] of [[65, 58], [345, 75], [49, 323]]) {
+      for (let y = 0; y < 7 * pitch; y++) {
+        for (let x = 0; x < 7 * pitch; x++) {
+          const d = Math.max(
+            Math.abs(Math.floor(x / pitch) - 3),
+            Math.abs(Math.floor(y / pitch) - 3),
+          );
+          if (d !== 3 && d > 1) continue;
+          const offset = ((top + y) * width + left + x) * 4;
+          data.fill(25, offset, offset + 3);
+        }
+      }
+    }
+    const trace = new CameraTrace();
+    let surfaceJobs = 0;
+    const reads = await neuralReads(
+      { width, height, data },
+      reader,
+      {
+        run(name, input, count) {
+          if (name === "surface") surfaceJobs += count;
+          return runner.run(name, input, count);
+        },
+      },
+      "neural",
+      [],
+      trace,
+    );
+    assert.ok(trace.frame.passes["structure-rejected"]);
+    assert.deepEqual(reads, []);
+    assert.equal(surfaceJobs, 0, `pitch ${pitch}`);
+    const classical = new CameraTrace();
+    assert.deepEqual(
+      await new VideoScanner().scan(
+        { width, height, data },
+        reader,
+        "curve",
+        undefined,
+        classical,
+      ),
+      [],
+    );
+    const grids = classical.frame.passes.classical ?? 0;
+    assert.ok(grids < 5, `pitch ${pitch}: ${grids} classical grids`);
+  }
 });

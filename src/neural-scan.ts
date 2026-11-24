@@ -12,6 +12,7 @@ import {
 import { sampleQrSurface, type Surface } from "./qr-surface.ts";
 import { qrFunctionMarks } from "./qr-patterns.ts";
 import { refineNeuralSurface } from "./nn-refine.ts";
+import { timingEvidence } from "./qr-timing.ts";
 import { readQrVersion } from "./qr-version.ts";
 import { correctIllumination, limitRaster } from "./illumination.ts";
 import {
@@ -217,8 +218,19 @@ export async function neuralReads(
     input,
     jobs.length * 3 + blobFrames.length,
   );
-  const surfaces: { frames: number[][]; size: number; base: Surface }[] = [];
-  const append = (candidate: QrCandidate, frames: number[][]) => {
+  const surfaces: {
+    frames: number[][];
+    size: number;
+    base: Surface;
+    evidence: number;
+  }[] = [];
+  const timingValue = (x: number, y: number) => pixel(binary, x, y);
+  const append = (candidate: QrCandidate, frames: number[][]): boolean => {
+    const evidence = timingEvidence(frames, timingValue);
+    if (!(evidence >= 1)) {
+      trace?.pass("structure-rejected");
+      return false;
+    }
     trace?.candidate(candidate.position, "marker-nn", true);
     const copies = [frames[1], frames[2]].map((p, k) =>
       Array.from({ length: 18 }, (_, i) => {
@@ -246,9 +258,10 @@ export async function neuralReads(
           map: (u, v) => candidateMap(candidate, (u + 1) / 2, (v + 1) / 2),
         };
       if (frameFeatures(frames, size).every(Number.isFinite)) {
-        surfaces.push({ frames, size, base });
+        surfaces.push({ frames, size, base, evidence });
       }
     }
+    return true;
   };
   for (const [i, job] of jobs.entries()) {
     const frames: number[][] = [];
@@ -372,19 +385,23 @@ export async function neuralReads(
           x: a[0] + ux * (x - 3.5) / (size - 7) + vx * (y - 3.5) / (size - 7),
           y: a[1] + uy * (x - 3.5) / (size - 7) + vy * (y - 3.5) / (size - 7),
         });
-        append({
-          version: String(version),
-          position: {
-            topLeft: point(0, 0),
-            topRight: point(size, 0),
-            bottomRight: point(size, size),
-            bottomLeft: point(0, size),
-          },
-        }, frames);
-        groups++;
+        if (
+          append({
+            version: String(version),
+            position: {
+              topLeft: point(0, 0),
+              topRight: point(size, 0),
+              bottomRight: point(size, size),
+              bottomLeft: point(0, size),
+            },
+          }, frames)
+        ) {
+          groups++;
+        }
       }
     }
   }
+  surfaces.sort((a, b) => b.evidence - a.evidence);
   const features = new Float32Array(surfaces.length * 13);
   surfaces.forEach((s, i) =>
     features.set(frameFeatures(s.frames, s.size), i * 13)

@@ -11,6 +11,7 @@ export type ScanPass =
   | "tile"
   | "finder"
   | "marker-nn"
+  | "structure-rejected"
   | "classical"
   | "surface-nn";
 type Position = ReadResult["position"];

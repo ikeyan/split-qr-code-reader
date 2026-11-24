@@ -11,6 +11,7 @@ const passNames: Record<ScanPass, string> = {
   tile: "拡大",
   finder: "マーカー探索",
   "marker-nn": "マーカーNN",
+  "structure-rejected": "構造で棄却",
   classical: "従来格子",
   "surface-nn": "NN格子",
 };

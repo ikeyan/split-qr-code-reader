@@ -3,6 +3,7 @@ import type { Raster } from "./image-enhance.ts";
 import { correctIllumination } from "./illumination.ts";
 import type { QrCandidate } from "./curvature.ts";
 import { qrFunctionMarks } from "./qr-patterns.ts";
+import { finderTangent, timingEvidence } from "./qr-timing.ts";
 export { qrFunctionMarks } from "./qr-patterns.ts";
 import { alignmentMesh, finderSurface, solve } from "./qr-landmarks.ts";
 
@@ -54,7 +55,11 @@ export function* fitQrSurfaces(
   candidate: QrCandidate,
   cycle?: number | readonly number[],
   initial?: { size: number; parameters: number[] },
-  debug?: { marker(pose: number[]): void; reject(surface: Surface): void },
+  debug?: {
+    marker(pose: number[]): void;
+    reject(surface: Surface): void;
+    rejectStructure?(): void;
+  },
 ): Generator<Surface> {
   const binary = correctIllumination(image, "mean"), { width, height } = image;
   const smooth = new Float32Array(width * height);
@@ -78,6 +83,18 @@ export function* fitQrSurfaces(
       i = iy * width + ix;
     return pixels[i] * (1 - fx) * (1 - fy) + pixels[i + 1] * fx * (1 - fy) +
       pixels[i + width] * (1 - fx) * fy + pixels[i + width + 1] * fx * fy;
+  };
+  const binaryValue = (x: number, y: number) => {
+    const ix = Math.round(x), iy = Math.round(y);
+    if (ix < 0 || ix >= width || iy < 0 || iy >= height) return 1;
+    return binary.data[(iy * width + ix) * 4] / 255;
+  };
+  const enoughTiming = (map: Surface["map"], size: number) => {
+    const frames = [[3.5, 3.5], [size - 3.5, 3.5], [3.5, size - 3.5]]
+      .map(([x, y]) => finderTangent(map, size, x, y));
+    // The global fit is less precise than independently refined poses.
+    // Only stop when all local runs offer no detectable alternation.
+    return timingEvidence(frames, binaryValue) > 0;
   };
   const sizeEstimate = 17 + 4 * (Number(candidate.version) || 5);
   const position = candidate.position;
@@ -125,7 +142,7 @@ export function* fitQrSurfaces(
       : Array.from({ length: 10 }, (_, i) => i + 1);
   let job = 0;
   for (const version of versions) {
-    for (const start of [0, 1, 2, 3, 4]) {
+    hypotheses: for (const start of [0, 1, 2, 3, 4]) {
       const hypothesis = job++;
       if (
         cycle !== undefined && !(typeof cycle === "number" ? [cycle] : cycle)
@@ -163,7 +180,9 @@ export function* fitQrSurfaces(
             (x, y) => interpolate(smooth, x, y),
             debug?.marker,
           );
-        if (finder) {
+        if (finder && !enoughTiming(finder.map, finder.size)) {
+          debug?.rejectStructure?.();
+        } else if (finder) {
           const mesh = alignmentMesh(
             finder,
             (x, y) => interpolate(smooth, x, y),
@@ -205,6 +224,12 @@ export function* fitQrSurfaces(
         if (pass === 45) {
           // Establish the finder pose before introducing the periodic timing line.
           if (score > .16) break;
+          if (
+            !enoughTiming(mapper(candidate.position, parameters, size), size)
+          ) {
+            debug?.rejectStructure?.();
+            continue hypotheses;
+          }
           active = template;
           score = evaluate();
           damping = 1;

@@ -1,3 +1,15 @@
+const proxySetting = Deno.env.get('IMAGE_PROXY_URL')?.trim();
+let proxyMeta = '';
+if (proxySetting) {
+  const url = new URL(proxySetting);
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) || url.username || url.password || url.hash) {
+    throw new Error('IMAGE_PROXY_URL must be an HTTPS endpoint or a local HTTP endpoint');
+  }
+  const content = url.href.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+  proxyMeta = `<meta name="image-proxy-url" content="${content}">`;
+}
+
 const revision = await new Deno.Command('git', {args:['rev-parse','--verify','HEAD']}).output();
 const commit = new TextDecoder().decode(revision.stdout).trim();
 if (!revision.success || !/^[0-9a-f]{40}$/.test(commit)) throw new Error('ビルド元のコミットを取得できません');
@@ -18,7 +30,10 @@ try {
   await Deno.copyFile('vendor/qr-networks.json', 'dist/qr-networks.json');
   await Deno.copyFile('vendor/heic-to.js', 'dist/heic-to.js');
   const html=await Deno.readTextFile('dist/index.html');
-  await Deno.writeTextFile('dist/index.html',html.replace('__BUILD_COMMIT__',commit).replace('<script src=', '<script defer src="./heic-to.js"></script><script src='));
+  await Deno.writeTextFile('dist/index.html',html
+    .replace('__BUILD_COMMIT__',commit)
+    .replace('</head>', () => `${proxyMeta}</head>`)
+    .replace('<script src=', '<script defer src="./heic-to.js"></script><script src='));
   await Deno.copyFile('vendor/heic-to-LICENSE.txt', 'dist/heic-to-LICENSE.txt');
   await Deno.copyFile('vendor/zxing-wasm-LICENSE.txt', 'dist/zxing-wasm-LICENSE.txt');
   await Deno.copyFile('vendor/ZXing-APACHE-LICENSE.txt', 'dist/ZXing-APACHE-LICENSE.txt');

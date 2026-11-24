@@ -2,7 +2,9 @@
 
 複数の QR Code Structured Append と通常の QR を画像やカメラから読み取り、端末内で組み立てる静的サイトです。カメラ映像上の QR に指を置くと採択し、指を置いたまま別の QR に移して連続して読み取れます。
 
-仕様は [spec/仕様.md](spec/仕様.md)、読み取り手法の検討は [docs/読み取りロバスト化の調査.md](docs/読み取りロバスト化の調査.md) を参照してください。読み取りと組み立ての処理は端末内で行い、ページ読み込み後にアプリが通信することはありません。QR デコーダーの WebAssembly は JavaScript に同梱します。
+別の Web ページの QR 画像もドラッグ＆ドロップできます。Web 画像はブラウザーで取得を試し、CORS などで取得できない場合は、設定済みの Cloudflare Worker に画像 URL を渡します。QR の読み取りと組み立ては端末内で行います。QR デコーダーの WebAssembly は JavaScript に同梱します。
+
+仕様は [spec/仕様.md](spec/仕様.md)、読み取り手法の検討は [docs/読み取りロバスト化の調査.md](docs/読み取りロバスト化の調査.md) を参照してください。
 
 ## 開発
 
@@ -25,6 +27,27 @@ deno run --allow-net --allow-read jsr:@std/http/file-server dist
 カメラの復号はページ読み込み時に用意する専用Workerで実行します。通常の補正をフレームごとに試し、最近の探索領域と成功した格子補正を次のフレームへ引き継ぎます。結果は毎回そのフレームの画素から復号し直します。対応機器では1920×1080、連続フォーカス・露出を要求します。
 
 曲面と照明むらの回帰テストは `deno test --allow-read tests/curved_paper_test.ts` で実行できます。QR を3D円筒面に投影して生成し、開発用と別シードの評価用それぞれで、元バイト列・分割情報が完全一致する読み取り率90%以上を要求します。実写真を確認するときはリポジトリ外に置き、`verify-png` にパスを渡してください。実写真はテストデータに含めません。
+
+### Cloudflare Worker の画像プロキシ
+
+1. `wrangler.toml` の `ALLOWED_ORIGIN` にリーダーを公開するオリジンを設定します。既定値は `https://ikeyan.github.io` です。
+2. Cloudflare にログインした状態で `npx wrangler deploy` を実行します。
+3. GitHub リポジトリの Actions リポジトリ変数 `IMAGE_PROXY_URL` に、デプロイ先の完全な URL（例 `https://split-qr-code-reader.<subdomain>.workers.dev/image`）を設定し、Pages のワークフローを実行します。ローカルや手動でビルドする場合は環境変数 `IMAGE_PROXY_URL` を設定して `deno task build` を実行します。
+
+ローカルでは、次のコマンドで Worker を起動します。
+
+```sh
+npx wrangler dev --var ALLOWED_ORIGIN:http://localhost:8000
+```
+
+別のターミナルでサイトを起動し、`http://localhost:8000` から試せます。
+
+```sh
+IMAGE_PROXY_URL=http://localhost:8787/image deno task build
+deno run --allow-net --allow-read jsr:@std/http/file-server dist
+```
+
+Worker は公開 HTTP(S) 上のラスター画像を最大 10 MiB まで取得します。画像の取得に失敗した場合は、元のページで画像をコピーしてリーダーに貼り付けられます。
 
 QR デコードに [zxing-wasm](https://github.com/Sec-ant/zxing-wasm) を使用しています。同梱ライセンスは `vendor/zxing-wasm-LICENSE.txt` です。
 

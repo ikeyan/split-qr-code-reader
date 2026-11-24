@@ -11,6 +11,7 @@ import {contains,type Point} from './geometry.ts';
 import {Pointers} from './pointers.ts';
 import {enqueuePreviews,dismissPreview,retainPreviews} from './previews.ts';
 import {clipboardImages,readClipboardImages} from './clipboard.ts';
+import {acceptsImageDrop,fetchDroppedImage,imageDrop} from './image-drop.ts';
 import {focusAt,videoFrame,videoPoint,initialVideoConstraints,cameraCapabilities,continuousCamera,setTorch,type CameraSupported} from './camera-focus.ts';
 import {prepareImage} from './images.ts';
 import {icon} from './icons.ts';
@@ -92,6 +93,8 @@ function App(){
   let cameraJobs:Promise<void>=Promise.resolve();
   function cameraTask<T>(task:()=>Promise<T>):Promise<T>{const next=cameraJobs.then(task);cameraJobs=next.then(()=>{},()=>{});return next;}
   let generation=0,previewStartX=0,dragDepth=0;
+  let webDrops=new AbortController();
+  const imageProxy=document.querySelector<HTMLMetaElement>('meta[name="image-proxy-url"]')?.content;
   let focusTimer:ReturnType<typeof setTimeout>|undefined;
   let previewSwiped=false;
   const pointers=new Pointers();
@@ -215,12 +218,22 @@ function App(){
       debugTrack?.requestFrame?.();
     }
   }
-  async function readImages(images:Iterable<Blob>){
+  async function readImages(images:Iterable<Blob>, signal?:AbortSignal){
     let seen=false,found=false,failed=false;
     for(const image of images){
-      try{const prepared=await prepareImage(image);if(!prepared)continue;seen=true;const codes=await decode(prepared,scanMode(),true,undefined,curvePipeline(),hasGpu());if(codes.length)found=true;for(const code of codes)add(code);}
+      try{
+        const prepared=await prepareImage(image);
+        if(signal?.aborted)return;
+        if(!prepared)continue;
+        seen=true;
+        const codes=await decode(prepared,scanMode(),true,undefined,curvePipeline(),hasGpu());
+        if(signal?.aborted)return;
+        if(codes.length)found=true;
+        for(const code of codes)add(code);
+      }
       catch{seen=true;failed=true;}
     }
+    if(signal?.aborted)return;
     if(!seen)setMessage('画像が見つかりませんでした。');
     else if(!found)setMessage(failed?'画像を読み取れませんでした。':'QR コードが見つかりませんでした。');
     else if(failed)setMessage('一部の画像を読み取れませんでした。');
@@ -231,17 +244,45 @@ function App(){
     catch{setMessage('画像を貼り付けできませんでした。ブラウザーの設定を確認してください。');}
   }
   const onPaste=(event:ClipboardEvent)=>{const images=clipboardImages(event.clipboardData);if(images.length){event.preventDefault();void readImages(images);}};
-  const isFiles=(event:DragEvent)=>Array.from(event.dataTransfer?.types??[]).includes('Files');
-  const dragEnter=(event:DragEvent)=>{if(isFiles(event)){event.preventDefault();dragDepth++;setDragging(true);}};
-  const dragOver=(event:DragEvent)=>{if(isFiles(event)){event.preventDefault();if(event.dataTransfer)event.dataTransfer.dropEffect='copy';}};
-  const dragLeave=(event:DragEvent)=>{if(isFiles(event)){dragDepth=Math.max(0,dragDepth-1);if(!dragDepth)setDragging(false);}};
-  const onDrop=(event:DragEvent)=>{if(isFiles(event)){event.preventDefault();dragDepth=0;setDragging(false);void readImages(Array.from(event.dataTransfer?.files??[]));}};
+  const dragEnter=(event:DragEvent)=>{
+    if(!acceptsImageDrop(event.dataTransfer))return;
+    event.preventDefault();
+    dragDepth++;
+    setDragging(true);
+  };
+  const dragOver=(event:DragEvent)=>{
+    if(!event.dataTransfer||!acceptsImageDrop(event.dataTransfer))return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect='copy';
+  };
+  const dragLeave=()=>{
+    dragDepth=Math.max(0,dragDepth-1);
+    if(!dragDepth)setDragging(false);
+  };
+  const onDrop=async(event:DragEvent)=>{
+    dragDepth=0;
+    setDragging(false);
+    const data=event.dataTransfer;
+    if(!data||(!data.files.length&&!acceptsImageDrop(data)))return;
+    event.preventDefault();
+    const source=imageDrop(data);
+    if(!source){setMessage('ドロップした内容から画像を見つけられませんでした。');return;}
+    if('files' in source){void readImages(source.files);return;}
+
+    const {signal}=webDrops;
+    try{
+      const image=await fetchDroppedImage(source.url,imageProxy,signal);
+      if(!signal.aborted){setMessage('');await readImages([image],signal);}
+    }catch{
+      if(!signal.aborted)setMessage('画像を取得できませんでした。画像をコピーして貼り付けてください。');
+    }
+  };
   const onVisibility=()=>{if(!document.hidden)void recovery.resume();};
   const onPageShow=()=>{void recovery.resume();};
   document.addEventListener('visibilitychange',onVisibility);window.addEventListener('pageshow',onPageShow);
   document.addEventListener('paste',onPaste);document.addEventListener('dragenter',dragEnter);document.addEventListener('dragover',dragOver);document.addEventListener('dragleave',dragLeave);document.addEventListener('drop',onDrop);
-  onCleanup(()=>{stop();cameraDecoder.dispose();clearTimeout(focusTimer);document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('pageshow',onPageShow);document.removeEventListener('paste',onPaste);document.removeEventListener('dragenter',dragEnter);document.removeEventListener('dragover',dragOver);document.removeEventListener('dragleave',dragLeave);document.removeEventListener('drop',onDrop);});
-  function reset(){if(fullDialog.open)fullDialog.close();batch(()=>{setExpanded(null);setCollection(emptyCollection());setPreviews([]);setMessage('');});}
+  onCleanup(()=>{webDrops.abort();stop();cameraDecoder.dispose();clearTimeout(focusTimer);document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('pageshow',onPageShow);document.removeEventListener('paste',onPaste);document.removeEventListener('dragenter',dragEnter);document.removeEventListener('dragover',dragOver);document.removeEventListener('dragleave',dragLeave);document.removeEventListener('drop',onDrop);});
+  function reset(){webDrops.abort();webDrops=new AbortController();if(fullDialog.open)fullDialog.close();batch(()=>{setExpanded(null);setCollection(emptyCollection());setPreviews([]);setMessage('');});}
   function remove(id:string){
     if(expanded()===id&&fullDialog.open)fullDialog.close();
     const next=deleteSuite(collection(),id);
@@ -296,8 +337,8 @@ function App(){
       ()=>collection().groups.length?collection().groups.map(group=>{
         const suites=collection().suites.filter(s=>s.parts[0].total===group.total&&s.parts[0].parity===group.parity);
         return h('div',{class:'group'},group.total>1?h('div',{class:'parts'},...group.slots.map((slot,i)=>h('span',{class:slot.length?'part done':'part','aria-label':`${i+1}番 ${slot.length?`${slot.length}種類読み込み済み`:'未読み込み'}`},String(i+1),slot.length>1?h('span',{class:'part-count','aria-hidden':'true'},String(slot.length)):null))):null,...suites.map(resultCard))();
-      }):h('p',{class:'empty'},'QRコードを読ませてください')()),
-    h('footer',h('span','読み取りデータはこの端末内で処理されます。'),h('span',{class:'build-commit'},'コミット: ',h('code',buildCommit),()=>gpuKnown()&&!hasGpu()?' No GPU':'')),
+      }):h('p',{class:'empty'},'QRコード画像をここにドロップできます。')()),
+    h('footer',h('span','QR の読み取りと組み立てはこの端末内で行います。'),h('span',{class:'build-commit'},'コミット: ',h('code',buildCommit),()=>gpuKnown()&&!hasGpu()?' No GPU':'')),
     h('div',{class:()=>`camera-stage ${active()?'':'hidden'}`},
       h('div',{class:'camera',ref:(el:HTMLDivElement)=>{camera=el;},onPointerDown:(e:PointerEvent)=>{e.preventDefault();camera.setPointerCapture(e.pointerId);pointer(e);void focusPointer(e);},onPointerMove:(e:PointerEvent)=>{if(pointers.has(e.pointerId))pointer(e);},onPointerUp:(e:PointerEvent)=>pointers.remove(e.pointerId),onPointerCancel:(e:PointerEvent)=>pointers.remove(e.pointerId),onLostPointerCapture:(e:PointerEvent)=>pointers.remove(e.pointerId)},
         h('video',{ref:(el:HTMLVideoElement)=>{video=el;},autoplay:true,muted:true,playsinline:true}),

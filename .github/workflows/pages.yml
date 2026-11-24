@@ -19,6 +19,8 @@ jobs:
         with:
           deno-version: v2.9.8
       - run: deno task build
+        env:
+          IMAGE_PROXY_URL: ${{ vars.IMAGE_PROXY_URL }}
       - run: deno task check
       - run: deno task test
       - uses: actions/upload-pages-artifact@v3

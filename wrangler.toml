@@ -1,0 +1,16 @@
+name = "split-qr-code-reader"
+main = "worker/image-proxy.ts"
+compatibility_date = "2026-11-22"
+workers_dev = true
+preview_urls = false
+
+[vars]
+ALLOWED_ORIGIN = "https://ikeyan.github.io"
+
+[[ratelimits]]
+name = "IMAGE_RATE_LIMIT"
+namespace_id = "27831001"
+
+[ratelimits.simple]
+limit = 30
+period = 60

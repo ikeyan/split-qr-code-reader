@@ -13,7 +13,7 @@
   },
   "tasks": {
     "build": "deno run -A scripts/build.ts",
-    "check": "deno check src/main.ts src/camera-worker.ts scripts/verify-png.ts scripts/verify-neural.ts scripts/compare-camera.ts scripts/nn/mine-negatives.ts tests/*.ts",
+    "check": "deno check src/main.ts src/camera-worker.ts scripts/verify-png.ts scripts/verify-neural.ts scripts/compare-camera.ts scripts/nn/mine-negatives.ts worker/image-proxy.ts tests/*.ts",
     "test": "deno test --allow-read tests",
     "compare:camera": "deno run -A scripts/compare-camera.ts",
     "test:gpu": "deno run -A scripts/verify-neural.ts",

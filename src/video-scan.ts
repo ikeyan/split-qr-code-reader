@@ -285,6 +285,7 @@ export class VideoScanner {
             hypotheses,
             job.seed,
             trace && {
+              fit: () => trace.frame.surfaceAttempts.classical++,
               rejectStructure: () => trace.pass("structure-rejected"),
               marker: (pose) => trace.markerFrame(pose, toFrame),
               reject: (surface) =>

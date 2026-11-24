@@ -406,6 +406,9 @@ export async function neuralReads(
   surfaces.forEach((s, i) =>
     features.set(frameFeatures(s.frames, s.size), i * 13)
   );
+  if (trace && method === "neural") {
+    trace.frame.surfaceAttempts.neural += surfaces.length;
+  }
   const meshes = method === "neural" && surfaces.length
     ? await runner.run("surface", features, surfaces.length)
     : new Float32Array();
@@ -418,6 +421,9 @@ export async function neuralReads(
       bottomLeft: s.base.map(-1, 1),
     };
     if (results.some((code) => sameLocation(code, { position }))) continue;
+    if (trace && method === "classical") {
+      trace.frame.surfaceAttempts.classical++;
+    }
     let surface = method === "neural"
       ? meshSurface(s.frames, s.size, meshes.subarray(i * 162, (i + 1) * 162))
       : surfaceFromFrames(s.base, s.frames, value);

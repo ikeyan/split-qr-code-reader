@@ -142,7 +142,7 @@ try {
   await page.goto(address);
   await page.waitForFunction(() =>
     !document.querySelector(
-      'select[aria-label="曲面推定"] option[value="neural"]',
+      'select[aria-label="曲面補正の方式"] option[value="neural"]',
     )?.hasAttribute("disabled")
   );
   assert.ok(
@@ -198,14 +198,14 @@ try {
     await page.locator(".observed-text").first().innerText(),
     new TextDecoder().decode(sample.expected),
   );
-  await page.getByLabel("曲面推定", { exact: true }).nth(1).selectOption(
+  await page.getByLabel("曲面補正の方式", { exact: true }).nth(1).selectOption(
     "classical",
   );
   await page.waitForFunction(() =>
     (globalThis as unknown as { workerMethods: string[] }).workerMethods
       .includes("classical")
   );
-  await page.getByLabel("曲面推定", { exact: true }).nth(1).selectOption(
+  await page.getByLabel("曲面補正の方式", { exact: true }).nth(1).selectOption(
     "neural",
   );
   await page.waitForFunction(() =>
@@ -216,6 +216,16 @@ try {
     name: "解析を重ねる",
     exact: true,
   });
+  const method = page.getByLabel("曲面補正の方式", { exact: true }).nth(1);
+  await method.selectOption("traditional");
+  await toggle.click();
+  await page.waitForFunction(() => {
+    const trace = (globalThis as unknown as { latestDebug?: CameraDebugFrame })
+      .latestDebug;
+    return trace && trace.passes.original && !trace.passes["marker-nn"];
+  });
+  await toggle.click();
+  await method.selectOption("neural");
   const frame = page.locator(".camera-debug-frame");
   assert.ok(!await frame.isVisible());
   await toggle.click();
@@ -320,9 +330,9 @@ try {
       document.querySelector(".build-commit")?.textContent?.endsWith(" No GPU")
     );
     assert.equal(
-      await fallback.getByLabel("曲面推定", { exact: true }).first()
+      await fallback.getByLabel("曲面補正の方式", { exact: true }).first()
         .inputValue(),
-      "classical",
+      "traditional",
     );
     await fallback.close();
   }

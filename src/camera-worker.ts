@@ -1,8 +1,7 @@
-import { createVideoDecoder } from "./decoder.ts";
+import { createVideoDecoder, type CurvePipeline } from "./decoder.ts";
 import type { ScanMode } from "./scan.ts";
 
 import { neuralStatus } from "./neural-service.ts";
-import type { SurfaceMethod } from "./neural-scan.ts";
 neuralStatus((gpu) => globalThis.postMessage({ gpu }));
 
 let decode = createVideoDecoder(), queue = Promise.resolve();
@@ -12,7 +11,7 @@ globalThis.onmessage = (event: MessageEvent) => {
     reset?: boolean;
     image?: ImageData;
     mode?: ScanMode;
-    method?: SurfaceMethod;
+    method?: CurvePipeline;
     allowNeural?: boolean;
     debug?: boolean;
   };

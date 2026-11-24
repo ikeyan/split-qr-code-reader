@@ -4,7 +4,7 @@ import {batch,createSignal,onCleanup} from 'solid-js';
 import {render} from 'solid-js/web';
 import h from 'solid-js/h';
 import type {ReadResult} from 'zxing-wasm/reader';
-import {decode} from './decoder.ts';
+import {decode,type CurvePipeline} from './decoder.ts';
 import {addPart,deleteSuite,emptyCollection,hasPart,type Suite} from './collection.ts';
 import {asPart} from './reader.ts';
 import {contains,type Point} from './geometry.ts';
@@ -20,7 +20,6 @@ import {CameraRecovery} from './camera-recovery.ts';
 import {CameraRecording,createCameraRecorder,recordingFilename,type RecordingPhase} from './camera-recording.ts';
 import {CameraDecoder} from './camera-decoder.ts';
 import {neuralStatus} from './neural-service.ts';
-import type {SurfaceMethod} from './neural-scan.ts';
 
 const revision=document.querySelector<HTMLMetaElement>('meta[name="build-commit"]')?.content??'';
 const buildCommit=/^[0-9a-f]{40}$/.test(revision)?revision:'開発版';
@@ -32,12 +31,12 @@ function App(){
   const [detected,setDetected]=createSignal<ReadResult[]>([]);
   const [observed,setObserved]=createSignal<Observation[]>([]);
   const [scanMode,setScanMode]=createSignal<ScanMode>('auto');
-  const [surfaceMethod,setSurfaceMethod]=createSignal<SurfaceMethod>('neural');
+  const [curvePipeline,setCurvePipeline]=createSignal<CurvePipeline>('neural');
   const [hasGpu,setHasGpu]=createSignal(false);
   let methodChosen=false;
   let mainGpu=false,workerGpu=typeof Worker==='undefined',mainGpuReady=false,workerGpuReady=typeof Worker==='undefined';
   const [gpuKnown,setGpuKnown]=createSignal(false);
-  const gpuStatus=(gpu:boolean)=>{setGpuKnown(mainGpuReady&&workerGpuReady);setHasGpu(gpu);if(!gpu)setSurfaceMethod('classical');else if(!methodChosen)setSurfaceMethod('neural');};
+  const gpuStatus=(gpu:boolean)=>{setGpuKnown(mainGpuReady&&workerGpuReady);setHasGpu(gpu);if(!gpu)setCurvePipeline('traditional');else if(!methodChosen)setCurvePipeline('neural');};
   const unsubscribeGpu=neuralStatus(gpu=>{if(gpu===undefined)return;mainGpuReady=true;mainGpu=gpu;gpuStatus(mainGpu&&workerGpu);});
   onCleanup(unsubscribeGpu);
   const [viewSize,setViewSize]=createSignal({width:1,height:1});
@@ -158,12 +157,12 @@ function App(){
         try{
           const width=video.videoWidth,height=video.videoHeight;
           if(width&&height){
-            const debugVersion=debugRevision, debug=debugCamera(), mode=scanMode(), method=surfaceMethod();
+            const debugVersion=debugRevision, debug=debugCamera(), mode=scanMode(), method=curvePipeline();
             canvas.width=width;canvas.height=height;context.drawImage(video,0,0,width,height);
             const {codes,debug:trace}=await cameraDecoder.scan(context.getImageData(0,0,width,height),mode,method,hasGpu(),debug);
             if(current!==generation)return;
             const view={width:camera.clientWidth,height:camera.clientHeight};
-            if(trace&&debugVersion===debugRevision&&mode===scanMode()&&method===surfaceMethod()){
+            if(trace&&debugVersion===debugRevision&&mode===scanMode()&&method===curvePipeline()){
               drawCameraDebug(debugCanvas,canvas,view,trace);
               debugTrack?.requestFrame?.();
               setDebugReady(true);
@@ -219,7 +218,7 @@ function App(){
   async function readImages(images:Iterable<Blob>){
     let seen=false,found=false,failed=false;
     for(const image of images){
-      try{const prepared=await prepareImage(image);if(!prepared)continue;seen=true;const codes=await decode(prepared,scanMode(),true,undefined,surfaceMethod(),hasGpu());if(codes.length)found=true;for(const code of codes)add(code);}
+      try{const prepared=await prepareImage(image);if(!prepared)continue;seen=true;const codes=await decode(prepared,scanMode(),true,undefined,curvePipeline(),hasGpu());if(codes.length)found=true;for(const code of codes)add(code);}
       catch{seen=true;failed=true;}
     }
     if(!seen)setMessage('画像が見つかりませんでした。');
@@ -260,7 +259,17 @@ function App(){
   function openFull(id:string){setExpanded(id);fullDialog.showModal();}
   function expandedSuite(){return collection().suites.find(s=>s.id===expanded());}
   function modeSelect(className:string){return h('select',{class:className,'aria-label':'読み取り方法',value:scanMode,onChange:(event:Event)=>setScanMode((event.currentTarget as HTMLSelectElement).value as ScanMode)},h('option',{value:'auto'},'自動'),h('option',{value:'standard'},'標準'),h('option',{value:'sharpen'},'輪郭補正'),h('option',{value:'curve'},'曲面補正'),h('option',{value:'shadow'},'影補正'));}
-  function surfaceSelect(camera=false){return h('select',{class:camera?'scan-mode camera-surface':'scan-mode','aria-label':'曲面推定',value:surfaceMethod,onChange:(event:Event)=>{methodChosen=true;setSurfaceMethod((event.currentTarget as HTMLSelectElement).value as SurfaceMethod);}},h('option',{value:'neural',disabled:()=>!hasGpu()},'曲面推定 NN'),h('option',{value:'classical'},'曲面推定 従来'));}
+  function curvePipelineSelect(camera=false){
+    return h('select',{
+      class:camera?'scan-mode camera-surface':'scan-mode',
+      'aria-label':'曲面補正の方式',
+      value:curvePipeline,
+      onChange:(event:Event)=>{methodChosen=true;setCurvePipeline((event.currentTarget as HTMLSelectElement).value as CurvePipeline);},
+    },
+    h('option',{value:'neural',disabled:()=>!hasGpu()},'マーカーNN・曲面NN'),
+    h('option',{value:'classical',disabled:()=>!hasGpu()},'マーカーNN・従来曲面'),
+    h('option',{value:'traditional'},'従来のみ'));
+  }
   function resultCard(suite:Suite){
     let textarea!:HTMLTextAreaElement;
     const [copied,setCopied]=createSignal(false);
@@ -279,7 +288,7 @@ function App(){
       h('button',{type:'button',class:'icon-button primary','aria-label':'カメラで読む',title:'カメラで読む',onClick:start},icon('camera')),
       h('label',{class:'icon-button upload-button',title:'写真を選ぶ'},icon('image'),h('input',{type:'file',accept:'image/*,.heic,.heif',multiple:true,'aria-label':'写真を選ぶ',onChange:files})),
       h('button',{type:'button',class:'icon-button','aria-label':'画像を貼り付け',title:'画像を貼り付け',onClick:pasteButton},icon('paste')),
-      modeSelect('scan-mode toolbar-mode'),surfaceSelect(),
+      modeSelect('scan-mode toolbar-mode'),curvePipelineSelect(),
       h('button',{type:'button',class:'icon-button danger reset-button','aria-label':'すべてリセット',title:'すべてリセット',onClick:reset},icon('reset'))),
     scanGuide(),
     h('p',{class:'status',role:'status'},message),
@@ -296,7 +305,7 @@ function App(){
         h('svg',{class:()=>debugReady()?'hidden':'',viewBox:()=>`0 0 ${viewSize().width} ${viewSize().height}`,preserveAspectRatio:'none','aria-hidden':'true'},()=>detected().map(code=>{const points=geometry(code),status=hasPart(collection(),asPart(code))?'done':'new',x=points[0].x,y=Math.max(16,points[0].y-14);return h('g',{class:`qr-marker ${status}`},h('polygon',{points:points.map(p=>`${p.x},${p.y}`).join(' ')}),h('rect',{x,y:y-14,width:code.sequenceSize>0?48:30,height:26,rx:13}),h('text',{x:x+7,y:y+5},`${code.sequenceSize>0?code.sequenceIndex+1+' ':''}${status==='done'?'✓':'+'}`))();})),
         ()=>focusPoint()?h('span',{class:'focus-ring',style:{left:`${focusPoint()!.x}px`,top:`${focusPoint()!.y}px`},'aria-hidden':'true'})():null),
       ()=>torchAvailable()?h('button',{type:'button',class:()=>`icon-button camera-torch ${torchOn()?'on':''}`,'aria-label':()=>torchOn()?'ライトを消す':'ライトを点ける','aria-pressed':()=>String(torchOn()),title:'ライト',disabled:torchBusy,onClick:toggleTorch},icon('torch'))():null,
-      modeSelect('scan-mode camera-mode'),surfaceSelect(true),
+      modeSelect('scan-mode camera-mode'),curvePipelineSelect(true),
       h('button',{type:'button',class:'camera-debug-toggle','aria-pressed':()=>String(debugCamera()),
         disabled:()=>recordingPhase()!=='idle',
         onClick:()=>{debugRevision++;setDebugCamera(!debugCamera());setDebugReady(false);}},

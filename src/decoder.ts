@@ -6,19 +6,20 @@ import type {Raster} from './image-enhance.ts';
 import {VideoScanner} from './video-scan.ts';
 import {neuralRunner,disableNeural} from './neural-service.ts';
 import {neuralReads,type SurfaceMethod} from './neural-scan.ts';
+export type CurvePipeline=SurfaceMethod|'traditional';
 const binary=Uint8Array.from(atob(wasm),c=>c.charCodeAt(0));
 const ready=prepareZXingModule({overrides:{wasmBinary:binary},fireImmediately:true});
 const rasterReader:RasterReader=(image,options)=>readBarcodes(new ImageData(image.data as Uint8ClampedArray<ArrayBuffer>,image.width,image.height),options);
 export function createVideoDecoder(){
   let scanner=new VideoScanner();
-  let previousMethod:SurfaceMethod|undefined;
-  return async(image:ImageData,mode:ScanMode,method:SurfaceMethod='neural',allowNeural=true,debug=false):Promise<CameraScanResult>=>{
+  let previousMethod:CurvePipeline|undefined;
+  return async(image:ImageData,mode:ScanMode,method:CurvePipeline='neural',allowNeural=true,debug=false):Promise<CameraScanResult>=>{
     await ready;
     const trace=debug?new CameraTrace():undefined;
     const result=(codes:ReadResult[]):CameraScanResult=>trace?{codes,debug:trace.finish(codes)}:{codes};
     let raw:ReadResult[]|undefined;
     if(method!==previousMethod){scanner=new VideoScanner();previousMethod=method;}
-    if(allowNeural&&(mode==='auto'||mode==='curve')){
+    if(method!=='traditional'&&allowNeural&&(mode==='auto'||mode==='curve')){
       const runner=await neuralRunner();
       if(runner){
         raw=await rasterReader(image,locatingOptions);
@@ -57,11 +58,11 @@ async function rasterize(blob:Blob):Promise<{raster:Raster;scaleX:number;scaleY:
 function scalePositions(codes:ReadResult[],scaleX:number,scaleY:number):ReadResult[]{
   return codes.map(code=>{const position=code.position;const scale=(p:{x:number;y:number})=>({x:p.x*scaleX,y:p.y*scaleY});return {...code,position:{topLeft:scale(position.topLeft),topRight:scale(position.topRight),bottomRight:scale(position.bottomRight),bottomLeft:scale(position.bottomLeft)}};});
 }
-export async function decode(image:ImageData|Blob,mode:ScanMode='auto',enhanceFrame=true,cycle?:number,method:SurfaceMethod='neural',allowNeural=true):Promise<ReadResult[]>{
+export async function decode(image:ImageData|Blob,mode:ScanMode='auto',enhanceFrame=true,cycle?:number,method:CurvePipeline='neural',allowNeural=true):Promise<ReadResult[]>{
   await ready;
   if(!(image instanceof Blob)){
     let learned:ReadResult[]=[];
-    if(allowNeural&&(mode==='auto'||mode==='curve')){
+    if(method!=='traditional'&&allowNeural&&(mode==='auto'||mode==='curve')){
       const runner=await neuralRunner();
       if(runner)try{learned=await neuralReads(image,rasterReader,runner,method);}catch{disableNeural();}
     }
@@ -76,7 +77,7 @@ export async function decode(image:ImageData|Blob,mode:ScanMode='auto',enhanceFr
   if(mode==='standard'){if(baseError)throw baseError;return base;}
   try{
     const {raster,scaleX,scaleY}=await rasterize(image);
-    if(allowNeural&&(mode==='auto'||mode==='curve')){
+    if(method!=='traditional'&&allowNeural&&(mode==='auto'||mode==='curve')){
       const runner=await neuralRunner();
       if(runner)try{base=mergeReads(base,scalePositions(await neuralReads(raster,rasterReader,runner,method),scaleX,scaleY));}catch{disableNeural();}
     }

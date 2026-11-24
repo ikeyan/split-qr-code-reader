@@ -19,6 +19,7 @@ type GridOutcome = "rejected" | "unread" | "decoded";
 
 export type CameraDebugFrame = {
   passes: Partial<Record<ScanPass, number>>;
+  surfaceAttempts: { classical: number; neural: number };
   candidates: { position: Position; pass: ScanPass; selected?: boolean }[];
   markers: { center: Point; axes?: Point[] }[];
   grids: {
@@ -36,6 +37,7 @@ export type CameraDebugFrame = {
 export class CameraTrace {
   readonly frame: CameraDebugFrame = {
     passes: {},
+    surfaceAttempts: { classical: 0, neural: 0 },
     candidates: [],
     markers: [],
     grids: [],

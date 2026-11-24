@@ -103,6 +103,8 @@ export function drawCameraDebug(
   const counts =
     `候補 ${trace.candidates.length}・マーカー ${trace.markers.length}・格子 ${trace.grids.length}・復号 ${trace.decoded.length}`;
   lines.push(counts);
+  const { classical, neural } = trace.surfaceAttempts;
+  lines.push(`曲面推定の試行 従来 ${classical} / NN ${neural}`);
   lines.push("黄 候補 / 紫 マーカー / 水色 格子");
   lines.push("赤点線 棄却格子 / 緑 復号");
   const best = trace.grids[0];

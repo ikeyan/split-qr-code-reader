@@ -1,9 +1,8 @@
 import type { CameraScanResult } from "./camera-trace.ts";
-import { createVideoDecoder } from "./decoder.ts";
+import { createVideoDecoder, type CurvePipeline } from "./decoder.ts";
 import type { ScanMode } from "./scan.ts";
 
 /** One worker is loaded with the page; frames and decoding data stay on the device. */
-import type { SurfaceMethod } from "./neural-scan.ts";
 export class CameraDecoder {
   private worker: Worker | undefined;
   private fallback = createVideoDecoder();
@@ -78,7 +77,7 @@ export class CameraDecoder {
   scan(
     image: ImageData,
     mode: ScanMode,
-    method: SurfaceMethod = "neural",
+    method: CurvePipeline = "neural",
     allowNeural = true,
     debug = false,
   ): Promise<CameraScanResult> {

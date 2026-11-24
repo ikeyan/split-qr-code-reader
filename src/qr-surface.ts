@@ -59,6 +59,7 @@ export function* fitQrSurfaces(
     marker(pose: number[]): void;
     reject(surface: Surface): void;
     rejectStructure?(): void;
+    fit?(): void;
   },
 ): Generator<Surface> {
   const binary = correctIllumination(image, "mean"), { width, height } = image;
@@ -183,6 +184,7 @@ export function* fitQrSurfaces(
         if (finder && !enoughTiming(finder.map, finder.size)) {
           debug?.rejectStructure?.();
         } else if (finder) {
+          debug?.fit?.();
           const mesh = alignmentMesh(
             finder,
             (x, y) => interpolate(smooth, x, y),
@@ -230,6 +232,7 @@ export function* fitQrSurfaces(
             debug?.rejectStructure?.();
             continue hypotheses;
           }
+          debug?.fit?.();
           active = template;
           score = evaluate();
           damping = 1;

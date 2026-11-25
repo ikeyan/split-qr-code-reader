@@ -12,6 +12,17 @@ const IMAGE_TYPES = new Set([
   'image/x-ms-bmp',
 ]);
 
+function rasterType(prefix: Uint8Array): string {
+  if ([137, 80, 78, 71, 13, 10, 26, 10].every((byte, i) => prefix[i] === byte)) {
+    return 'image/png';
+  }
+  if (prefix[0] === 0xff && prefix[1] === 0xd8 && prefix[2] === 0xff) return 'image/jpeg';
+  const magic = String.fromCharCode(...prefix);
+  if (magic.startsWith('GIF87a') || magic.startsWith('GIF89a')) return 'image/gif';
+  if (magic.startsWith('RIFF') && magic.slice(8, 12) === 'WEBP') return 'image/webp';
+  return '';
+}
+
 class ProxyError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
@@ -100,8 +111,9 @@ async function retrieveImage(url: URL, signal: AbortSignal, fetchUpstream: typeo
       continue;
     }
 
-    const type = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
-    if (!response.ok || !response.body || !IMAGE_TYPES.has(type)) {
+    const declared = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
+    const inferType = !declared || declared === 'application/octet-stream';
+    if (!response.ok || !response.body || (!inferType && !IMAGE_TYPES.has(declared))) {
       await response.body?.cancel();
       throw new ProxyError(415, 'Image is unavailable or unsupported');
     }
@@ -112,15 +124,31 @@ async function retrieveImage(url: URL, signal: AbortSignal, fetchUpstream: typeo
 
     const chunks: Uint8Array<ArrayBuffer>[] = [];
     const reader = response.body.getReader();
+    const prefix = inferType ? new Uint8Array(12) : undefined;
+    let type = inferType ? '' : declared;
     let size = 0;
     try {
       for (;;) {
         const { done, value } = await reader.read();
-        if (done) return new Blob(chunks, { type });
+        if (done) {
+          if (!type) throw new ProxyError(415, 'Image is unavailable or unsupported');
+          return new Blob(chunks, { type });
+        }
+        const offset = size;
         size += value.byteLength;
         if (size > MAX_IMAGE_BYTES) {
           await reader.cancel();
           throw new ProxyError(413, 'Image is too large');
+        }
+        if (prefix && offset < prefix.length) {
+          prefix.set(value.subarray(0, prefix.length - offset), offset);
+          if (size >= prefix.length) {
+            type = rasterType(prefix);
+            if (!type) {
+              await reader.cancel();
+              throw new ProxyError(415, 'Image is unavailable or unsupported');
+            }
+          }
         }
         chunks.push(value);
       }

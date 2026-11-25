@@ -94,3 +94,37 @@ Deno.test('proxy rejects non-images and enforces the byte limit for streamed ima
   const large = new Response(chunks, { headers: { 'Content-Type': 'image/png' } });
   assert.equal((await imageProxy(target, env, serve(large))).status, 413);
 });
+
+Deno.test('proxy infers common raster types across chunks when Content-Type is missing or generic', async () => {
+  const samples = [
+    ['image/png', new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82])],
+    ['image/jpeg', new Uint8Array([255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1])],
+    ['image/gif', new TextEncoder().encode('GIF89a\x01\x00\x01\x00\x00\x00')],
+    ['image/webp', new TextEncoder().encode('RIFF\x20\x00\x00\x00WEBPVP8 ')],
+  ] as const;
+  for (const [type, original] of samples) {
+    for (const contentType of ['', 'application/octet-stream']) {
+      const body = ReadableStream.from([original.slice(0, 5), original.slice(5)]);
+      const headers = contentType ? { 'Content-Type': contentType } : undefined;
+      const response = await imageProxy(imageRequest('https://images.example.com/qr'), env, (input) => {
+        const url = new URL(String(input));
+        return Promise.resolve(url.hostname === 'cloudflare-dns.com' ? dnsAnswer(url) : new Response(body, { headers }));
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('Content-Type'), type);
+      assert.deepEqual(new Uint8Array(await response.arrayBuffer()), original);
+    }
+  }
+});
+
+Deno.test('proxy rejects unrecognized bytes even when the URL ends in .png', async () => {
+  for (const body of ['<svg/>', '<html>Not an image</html>']) {
+    const response = await imageProxy(imageRequest('https://images.example.com/qr.png'), env, (input) => {
+      const url = new URL(String(input));
+      return Promise.resolve(url.hostname === 'cloudflare-dns.com'
+        ? dnsAnswer(url)
+        : new Response(new TextEncoder().encode(body)));
+    });
+    assert.equal(response.status, 415);
+  }
+});

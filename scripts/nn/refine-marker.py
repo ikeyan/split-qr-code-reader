@@ -1,4 +1,4 @@
-"""Fine-tune only the marker classification output with reviewed photo patches."""
+"""Fine-tune only the marker classification output with mined background patches."""
 import argparse
 import base64
 import json
@@ -12,10 +12,10 @@ from torch.nn.functional import binary_cross_entropy_with_logits, linear
 from train import marker_data
 
 
-def patches(directory):
-    files = sorted(directory.glob("*.f32"))
+def patches(directories):
+    files = [file for directory in directories for file in sorted(directory.glob("*.f32"))]
     if not files:
-        raise ValueError(f"No mined marker patches in {directory}")
+        raise ValueError(f"No mined marker patches in {directories}")
     arrays = [np.fromfile(file, dtype="<f4").reshape(-1, 1024) for file in files]
     return torch.from_numpy(np.concatenate(arrays))
 
@@ -32,7 +32,12 @@ def main():
     parser.add_argument("train", type=Path)
     parser.add_argument("holdout", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--extra-train", type=Path, action="append", default=[])
+    parser.add_argument("--steps", type=int, default=1400)
+    parser.add_argument("--strength", type=float, default=.2)
     args = parser.parse_args()
+    if args.steps <= 0 or not 0 <= args.strength <= 1:
+        parser.error("steps must be positive and strength must be between 0 and 1")
     torch.manual_seed(47103)
     model = json.loads(args.baseline.read_text())
     layers = model["marker"]["layers"]
@@ -44,8 +49,8 @@ def main():
             pixels = linear(pixels, matrix, offset).relu()
         return pixels
 
-    training = patches(args.train)
-    evaluation = patches(args.holdout)
+    training = patches([args.train, *args.extra_train])
+    evaluation = patches([args.holdout])
     replay, labels = marker_data(16384, 78991)
     validation, expected = marker_data(4096, 53962)
     known = torch.from_numpy(replay)
@@ -64,10 +69,11 @@ def main():
     )
     nn.init.zeros_(residual[-1].weight)
     nn.init.zeros_(residual[-1].bias)
-    original_train = baseline(training)
+    # Only logits from the frozen model are retained for the photographic pool.
+    original_train = torch.cat([baseline(batch) for batch in training.split(4096)])
     original_known = baseline(known)
     optimizer = torch.optim.AdamW(residual.parameters(), lr=.001)
-    for _ in range(1400):
+    for _ in range(args.steps):
         i = torch.randint(len(known), (512,))
         j = torch.randint(len(training), (256,))
         known_delta = residual(known[i]).flatten()
@@ -84,7 +90,7 @@ def main():
         optimizer.step()
 
     # Calibrate on the synthetic curved QR development cases.
-    strength = .2
+    strength = args.strength
     with torch.no_grad():
         negative_before = baseline(evaluation)
         negative_after = negative_before + strength * residual(evaluation).flatten()
